@@ -4,6 +4,7 @@ Finance news monitor — checks NSE earnings calendar + market events for conten
 IT services transcripts + macro events (RBI, SEBI, earnings season) → draft generation.
 Run daily via launchd. SEBI: education/data/language-analysis only.
 """
+from __future__ import annotations  # PEP 604 union syntax on Python 3.7+
 import json, re, sys
 from pathlib import Path
 from datetime import date, datetime

@@ -3,10 +3,11 @@
 Draft generator — takes a topic/context and outputs a formatted content draft.
 
 Bulk generation routes to a cheap Anthropic-compatible endpoint when one is configured
-via env (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN + BULK_MODEL). If it isn't, it falls
-back to the default Anthropic client and a frontier model — so out of the box it just
-works on a standard Anthropic key. See .env.template.
+via env (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN + BULK_MODEL). If it isn't, it uses
+the `claude` CLI, which works headless on your logged-in plan — no API key needed. See
+.env.template.
 """
+from __future__ import annotations  # PEP 604 (`str | None`) on Python 3.7+
 import os, sys, json, re
 from datetime import date
 from pathlib import Path
