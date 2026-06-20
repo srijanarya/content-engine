@@ -1,0 +1,30 @@
+# Local model routing — credentials, NEVER commit
+monitor/.env.local
+.env
+.env.*
+!.env.template
+
+# Runtime state — not source
+monitor/seen_ai.json
+monitor/seen_finance.json
+monitor/LEARNINGS.md
+monitor/*.log
+monitor/run.log
+monitor/run.err
+
+# Generated content — published on channels, not versioned here.
+# (Sample drafts kept under drafts/examples/ are tracked; see below.)
+drafts/*.md
+!drafts/examples/
+
+# Performance data — real engagement numbers stay local
+content_performance.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# OS
+.DS_Store
