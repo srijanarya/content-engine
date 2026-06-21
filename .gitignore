@@ -20,9 +20,10 @@ drafts/*.md
 # Performance data — real engagement numbers stay local
 content_performance.json
 
-# Internal business strategy + unreleased product/sales drafts — local only, never public
+# Internal business strategy + unreleased product/sales/growth drafts — local only, never public
 STRATEGY.md
 product/
+growth/
 
 # Python
 __pycache__/
