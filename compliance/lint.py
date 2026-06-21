@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""
+SEBI compliance linter — the hard gate before any market content is published or sold.
+
+The line (primary-sourced, see reports/deep-research/2026-06-21-sebi-compliance.json):
+  SAFE   = market data, broad-index/regime DESCRIPTION, sector-level commentary, macro,
+           statistical summaries, non-recommendatory language analysis.
+  BLOCK  = ANY per-security buy/sell/hold/short/avoid/target/stop-loss/bias — i.e. a
+           recommendation on a SPECIFIC stock. Illegal to publish/sell unregistered.
+
+This is a code-level gate, NOT a prompt suggestion. `is_safe()` returns False on any BLOCK.
+
+ponytail: regex + word-list, no NER dependency. Ceiling = it keys off a known ticker/name
+list + directional-word proximity; an unlisted micro-cap referenced by a novel nickname could
+slip through. Upgrade path: add NER (spaCy) if the ticker list proves too narrow. The list is
+seeded from the FNO universe; extend via tickers.txt.
+"""
+from __future__ import annotations
+import json, re, sys
+from pathlib import Path
+
+HERE = Path(__file__).parent
+
+# HIGH-PRECISION directional terms — near a specific stock = a per-security call (BLOCK).
+# Deliberately excludes ambiguous English words (call/book/hold/add/reduce/exit/target/long/short
+# bare) to avoid false positives on "earnings call", "order book", "household", "short-term", etc.
+# Those ambiguous forms, when they ARE real calls, live in structured fields (DANGER_KEYS) which the
+# structured linter catches exactly. Bare long/short are caught only when IMMEDIATELY adjacent to a
+# ticker (see lint_text), so "short TCS" blocks but "short-term" does not.
+DIRECTIONAL = {
+    "buy", "sell", "accumulate", "strongbuy", "overweight", "underweight",
+    "longonly", "shortonly", "bullish", "bearish", "avoid",
+}
+DIRECTIONAL_ADJACENT = {"short", "long"}  # only count when right next to a ticker (window 1)
+# Phrases (checked on the joined text) that are explicit calls.
+DIRECTIONAL_PHRASES = ("strong buy", "stop loss", "price target", "target price", "book profit",
+                       "go long", "go short", "trading call", "buy call", "sell call")
+# Contexts where a directional word is NOT a call — skip these.
+STOP_PHRASES = ("sell-side", "sell side", "buy-side", "buy side", "buyback", "buy back",
+                "sell-off", "sell off", "short-term", "short term", "long-term", "long term",
+                "buyers", "sellers", "buying", "selling", "longer", "shorter")
+DISCLAIMER_MARKERS = ("not investment advice", "no buy/sell", "not a recommendation",
+                      "not a research report", "buy/sell/hold", "for educational",
+                      "do your own research", "consult a sebi")
+
+# Structured-data keys that encode a per-stock directional view.
+DANGER_KEYS = {
+    "side_bias", "strong_buy", "strong_buys", "aksh_strong_buys", "recommendation",
+    "rec", "trade_signal", "price_target", "tp_pct", "sl_pct", "stop_loss",
+    "stoploss", "action", "verdict",
+}
+SAFE_BIAS_VALUES = {"neutral", "none", "", None}  # side_bias=neutral isn't a directional call
+
+# Sector/index tokens — matched only when UPPERCASE or followed by sector/index/stocks (precise),
+# since most are common English words (it/bank/auto/media/metal/energy). Directional-near-sector = WARN.
+INDEX_SECTOR = {
+    "NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCAP", "SMALLCAP", "VIX",
+    "IT", "BANK", "AUTO", "PHARMA", "FMCG", "METAL", "ENERGY", "REALTY", "MEDIA",
+    "INFRA", "PSU", "PSUBANK",
+}
+_SECTOR_FOLLOWERS = {"sector", "sectors", "index", "stocks", "pack", "space"}
+
+_CORE_TICKERS = (
+    "RELIANCE HDFCBANK ICICIBANK TCS INFY HINDUNILVR ITC SBIN BHARTIARTL KOTAKBANK LT "
+    "AXISBANK BAJFINANCE ASIANPAINT MARUTI SUNPHARMA TITAN ULTRACEMCO WIPRO NESTLEIND "
+    "HCLTECH ONGC NTPC POWERGRID TATAMOTORS TATASTEEL JSWSTEEL ADANIENT ADANIPORTS COALINDIA "
+    "BAJAJFINSV GRASIM HINDALCO DIVISLAB DRREDDY CIPLA BRITANNIA EICHERMOT HEROMOTOCO "
+    "BPCL IOC TECHM INDUSINDBK UPL APOLLOHOSP TATACONSUM SBILIFE HDFCLIFE BAJAJ-AUTO "
+    "LTIM LTIMINDTREE DMART PIDILITIND DABUR GODREJCP HAVELLS SIEMENS PNB BANKBARODA "
+    "DLF"
+).split()  # standard Nifty/FNO names (public). Personal watchlist → gitignored tickers.txt.
+# Common company-name variants (lowercased) that aren't the ticker.
+_NAME_VARIANTS = {
+    "reliance", "infosys", "hdfc", "icici", "kotak", "axis", "wipro", "maruti", "titan",
+    "asian paints", "bajaj finance", "tata motors", "tata steel", "adani", "sun pharma",
+    "dr reddy", "hindustan unilever", "hul", "larsen", "ultratech", "nestle",
+}
+
+
+def _load_tickers() -> set[str]:
+    tickers = set(_CORE_TICKERS)
+    f = HERE / "tickers.txt"
+    if f.exists():
+        for line in f.read_text().splitlines():
+            t = line.strip().upper()
+            if t and not t.startswith("#"):
+                tickers.add(t)
+    return tickers
+
+
+TICKERS = _load_tickers()
+_WORD = re.compile(r"[A-Za-z][A-Za-z&\-]+")
+
+
+def _norm(tok: str) -> str:
+    return tok.lower().replace("_", "").replace("-", "")
+
+
+_NAME_NORMS = {_norm(n) for n in _NAME_VARIANTS}
+_DIR_NORMS = {_norm(d) for d in DIRECTIONAL}
+
+
+def _sentences(text: str) -> list[str]:
+    return re.split(r"(?<=[.!?\n])\s+", text)
+
+
+def lint_text(text: str, window: int = 5) -> list[dict]:
+    """Return violations in free text. severity 'block' (per-stock call) or 'warn' (sector/index call).
+    Precision-biased: skips disclaimers and stop-phrase contexts; bare long/short only block when
+    immediately adjacent to a ticker; sector words match only when UPPERCASE or sector-qualified."""
+    violations = []
+    for sent in _sentences(text):
+        low = sent.lower()
+        if any(m in low for m in DISCLAIMER_MARKERS):
+            continue  # the disclaimer SAYS "no buy/sell/hold" — that's not a call
+        # blank out stop-phrase regions so their words don't match
+        scrubbed = low
+        for sp in STOP_PHRASES:
+            scrubbed = scrubbed.replace(sp, " " * len(sp))
+        # explicit call phrases anywhere in the sentence
+        if any(p in scrubbed for p in DIRECTIONAL_PHRASES):
+            violations.append({"severity": "block", "snippet": sent.strip()[:120],
+                               "reason": "explicit directional phrase"})
+            continue
+
+        tokens = _WORD.findall(sent)
+        norm = [_norm(t) for t in tokens]
+        upper = [t.upper() for t in tokens]
+        for i, tok in enumerate(tokens):
+            up, nl = upper[i], norm[i]
+            is_ticker = up in TICKERS
+            is_name = nl in _NAME_NORMS
+            # sector only if uppercase token OR next token is sector/index/stocks
+            nxt = tokens[i + 1].lower() if i + 1 < len(tokens) else ""
+            is_index = (tok.isupper() and up in INDEX_SECTOR) or (up in INDEX_SECTOR and nxt in _SECTOR_FOLLOWERS)
+            if not (is_ticker or is_name or is_index):
+                continue
+            lo, hi = max(0, i - window), min(len(tokens), i + window + 1)
+            near = set(norm[lo:i] + norm[i + 1:hi])
+            # if this token region was stop-phrased, skip (e.g. "selling" near a name)
+            hits = near & _DIR_NORMS
+            # bare long/short only count if immediately adjacent to a TICKER
+            if (is_ticker):
+                adj = {norm[j] for j in (i - 1, i + 1) if 0 <= j < len(norm)}
+                hits |= (adj & DIRECTIONAL_ADJACENT)
+            if not hits:
+                continue
+            sev = "warn" if (is_index and not is_ticker and not is_name) else "block"
+            violations.append({
+                "severity": sev, "entity": tok, "directional": sorted(hits),
+                "snippet": " ".join(tokens[lo:hi]),
+                "reason": ("per-security directional call" if sev == "block"
+                           else "sector/index directional — review (sector TA exempt; a sector CALL is not)"),
+            })
+    return violations
+
+
+def lint_structured(obj, path: str = "") -> list[dict]:
+    """Walk a dict/list (e.g. a regime JSON) and flag danger keys + non-neutral biases."""
+    violations = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            kl = k.lower()
+            here = f"{path}.{k}" if path else k
+            if kl in DANGER_KEYS:
+                # side_bias=neutral / tp=null are not calls; everything else under a danger key is.
+                if kl in ("side_bias", "bias") and (str(v).lower() in {b for b in SAFE_BIAS_VALUES if b}):
+                    pass
+                elif v in (None, "", [], {}):
+                    pass
+                else:
+                    violations.append({
+                        "severity": "block", "path": here, "key": k, "value": v,
+                        "reason": f"structured per-stock directional field '{k}'",
+                    })
+            violations += lint_structured(v, here)
+    elif isinstance(obj, list):
+        for idx, item in enumerate(obj):
+            violations += lint_structured(item, f"{path}[{idx}]")
+    elif isinstance(obj, str):
+        violations += [{**v, "path": path} for v in lint_text(obj)]
+    return violations
+
+
+def is_safe(content) -> bool:
+    """True only if there are ZERO block-level violations. Warns do not fail the gate."""
+    v = lint_structured(content) if not isinstance(content, str) else lint_text(content)
+    return not any(x["severity"] == "block" for x in v)
+
+
+def report(content) -> list[dict]:
+    return lint_structured(content) if not isinstance(content, str) else lint_text(content)
+
+
+def demo():
+    # BLOCK: explicit per-stock call
+    assert not is_safe("STRONG_BUY RELIANCE — accumulate on dips"), "must block per-stock buy call"
+    assert not is_safe("I'd short TCS here, target 3800"), "must block short call"
+    assert not is_safe({"symbol": "HDFCBANK", "side_bias": "long-only"}), "must block structured side_bias"
+    assert not is_safe({"aksh_strong_buys": [{"symbol": "DYNAMIC", "score": 95}]}), "must block strong_buys"
+    # SAFE: regime / data / sector description
+    assert is_safe("Nifty closed -1.62% at 23,430, below its 75-EMA. Pullback regime; VIX 19.3."), "regime desc is safe"
+    assert is_safe("FII net -1,987 Cr, DII +4,224 Cr. IT sector -3.73%, the weakest of the day."), "sector data is safe"
+    assert is_safe({"symbol": "RELIANCE", "side_bias": "neutral"}), "neutral bias is not a call"
+    # WARN (not block): a sector-level directional phrase
+    v = lint_text("avoid IT this week")
+    assert any(x["severity"] == "warn" for x in v), "sector directional should warn"
+    assert is_safe("avoid IT this week"), "a sector warn must not hard-fail the gate"
+    print("lint demo: all assertions passed")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "demo":
+        demo()
+    elif len(sys.argv) > 1:
+        p = Path(sys.argv[1])
+        content = json.loads(p.read_text()) if p.suffix == ".json" else p.read_text()
+        vs = report(content)
+        blocks = [v for v in vs if v["severity"] == "block"]
+        print(f"{p.name}: {len(blocks)} BLOCK, {len(vs) - len(blocks)} warn")
+        for v in vs:
+            print(f"  [{v['severity']}] {v.get('path') or v.get('snippet','')}: {v['reason']}")
+        sys.exit(1 if blocks else 0)
+    else:
+        demo()

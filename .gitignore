@@ -25,6 +25,11 @@ STRATEGY.md
 product/
 growth/
 
+# Couples to the private trading system / personal watchlist — local only
+monitor/daily_market_post.py
+compliance/tickers.txt
+compliance/regime_safe*.json
+
 # Python
 __pycache__/
 *.pyc

@@ -91,18 +91,31 @@ Write the newsletter, X thread, and LinkedIn carousel for this piece. Follow the
     else:
         body, model_used = _gen_via_cli(prompt), "claude-cli"
 
+    # HARD compliance gate for finance content — a per-stock call never reaches the queue.
+    status = "needs-review"
+    if engine == "finance":
+        from compliance.lint import report as lint_report
+        blocks = [v for v in lint_report(body) if v["severity"] == "block"]
+        if blocks:
+            status = "BLOCKED-sebi"
+            offenders = "; ".join(f"{b.get('snippet') or b.get('path')}" for b in blocks[:5])
+            body = (f"> ⛔ SEBI LINT BLOCKED — {len(blocks)} per-stock directional call(s) detected; "
+                    f"do NOT publish. Offenders: {offenders}\n\n") + body
+            print(f"⛔ SEBI gate BLOCKED this draft ({len(blocks)} violations) — marked BLOCKED-sebi",
+                  file=sys.stderr)
+
     frontmatter = f"""---
 id: {today}-{slug}
 engine: {engine}
 topic: {topic}
-status: needs-review
+status: {status}
 model: {model_used}
 generated: {today}
 ---
 
 """
     out_path.write_text(frontmatter + body)
-    print(f"Draft saved: {out_path}")
+    print(f"Draft saved: {out_path}" + ("  [BLOCKED — see top of file]" if status == "BLOCKED-sebi" else ""))
     return str(out_path)
 
 

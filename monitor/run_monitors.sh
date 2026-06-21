@@ -25,4 +25,10 @@ python3 "$MONITOR_DIR/ai_world_monitor.py" >> "$LOG" 2>&1 || echo "ai_world_moni
 echo "--- Finance monitor ---" >> "$LOG"
 python3 "$MONITOR_DIR/finance_monitor.py" >> "$LOG" 2>&1 || echo "finance_monitor failed" >> "$LOG"
 
+# Daily market wrap from the regime artifact (local-only; couples to the trading system).
+if [ -f "$MONITOR_DIR/daily_market_post.py" ]; then
+    echo "--- Daily market wrap ---" >> "$LOG"
+    python3 "$MONITOR_DIR/daily_market_post.py" >> "$LOG" 2>&1 || echo "daily_market_post failed" >> "$LOG"
+fi
+
 echo "=== Done $(date) ===" >> "$LOG"
