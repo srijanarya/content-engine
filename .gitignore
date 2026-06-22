@@ -56,3 +56,11 @@ X_SETUP.md
 
 # Red-team eval samples (generated, local)
 compliance/redteam_samples.json
+
+# Internal strategy / research / content queue / model evals — local only, never public.
+# (untracked + previously un-ignored; one careless `git add -A` would push these to the PUBLIC repo)
+CONTENT-FACTORY-BRIEF.md
+PLAYBOOK.md
+post-queue/
+research/
+evals/
