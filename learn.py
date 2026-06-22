@@ -80,8 +80,23 @@ def main():
         lines.append(f"- Prefer hook style: `{best_hook}` (highest X engagement)")
     lines.append("- Continue publishing both engines; weight toward whichever audience converts\n")
 
+    # Plain-text top biases for generate_draft.py to read (the signal, not the markdown report).
+    # Include engines too: auto-ingested threads/replies have no hook_style, so engine is often the
+    # only dimension with data — without it learnings_top.txt would stay empty.
+    eng_avgs = {}
+    for engine, vals in by_engine.items():
+        xv = [v for k, v in vals if k == "x_eng"]
+        if xv:
+            eng_avgs[engine] = sum(xv) / len(xv)
+    top = [f"hook '{h}' -> {a:.1%} avg X engagement"
+           for h, a in sorted(hook_avgs.items(), key=lambda x: -x[1])[:2]]
+    top += [f"engine '{e}' -> {a:.1%} avg X engagement"
+            for e, a in sorted(eng_avgs.items(), key=lambda x: -x[1])[:2]]
+
     out = "\n".join(lines)
     LEARNINGS_FILE.parent.mkdir(exist_ok=True)
+    if top:
+        (ENGINE_DIR / "monitor" / "learnings_top.txt").write_text("\n".join(top) + "\n")
 
     # Append to learnings file (keep history)
     with open(LEARNINGS_FILE, "a") as f:

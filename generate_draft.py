@@ -66,8 +66,23 @@ def _gen_via_cli(prompt: str) -> str:
     return out.stdout.strip()
 
 
-def generate(engine: str, topic: str, context: str, slug: str | None = None) -> str:
-    """Generate a draft and save it. Returns the saved file path."""
+def _learnings_line() -> str:
+    """One 'what's been working' line from learn.py's output. Empty until the loop has data."""
+    lt = ENGINE_DIR / "monitor" / "learnings_top.txt"
+    txt = lt.read_text().strip() if lt.exists() else ""
+    if not txt:
+        return ""
+    return ("\n\nWhat's been working lately (lean toward these where natural; never at the expense of "
+            "the voice or the SEBI rule):\n" + txt)
+
+
+def generate(engine: str, topic: str, context: str, slug: str | None = None, *,
+             use_learnings: bool = True) -> str:
+    """Generate a draft and save it. Returns the saved file path.
+
+    use_learnings (keyword-only, default on) folds learn.py's top biases into the USER prompt — not the
+    system prompt, so it can never weaken the SEBI framing. No-op until monitor/learnings_top.txt exists.
+    """
     today = date.today().isoformat()
     slug = slug or re.sub(r"[^a-z0-9]+", "-", topic.lower())[:40].strip("-")
     out_path = DRAFTS_DIR / f"{today}-{engine[:7]}-{slug}.md"
@@ -79,7 +94,7 @@ Context / source material:
 {context}
 
 Write the newsletter, X thread, and LinkedIn carousel for this piece. Follow the voice guide.
-{"SEBI: finance content — education and data analysis only, no buy/sell calls." if engine == "finance" else ""}"""
+{"SEBI: finance content — education and data analysis only, no buy/sell calls." if engine == "finance" else ""}""" + (_learnings_line() if use_learnings else "")
 
     # Bulk endpoint if configured (saves quota); else the CLI (default plan).
     if BULK_BASE and BULK_TOKEN and BULK_MODEL:

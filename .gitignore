@@ -30,6 +30,18 @@ monitor/daily_market_post.py
 compliance/tickers.txt
 compliance/regime_safe*.json
 
+# X auto-post lane — couples to live X credentials; never public
+post_x.py
+posted_log.json
+receipt_drip.py
+ingest_performance.py
+# Browser transport, reply engine, cron + staged launchd, kill-switch, debug shots — all couple to live X
+x/
+# Reply pipeline runtime state + drafted/approved/posted replies
+reply-pipeline/
+# Live market data the finance posts render from (generated runtime state)
+monitor/regime_safe.json
+
 # Python
 __pycache__/
 *.pyc
@@ -38,3 +50,9 @@ venv/
 
 # OS
 .DS_Store
+
+# X auto-post setup notes — local only
+X_SETUP.md
+
+# Red-team eval samples (generated, local)
+compliance/redteam_samples.json
