@@ -27,14 +27,18 @@ not on the sidelines.
 ## Hard nos
 - No hype words: "game-changer," "revolutionary," "insane," "mind-blowing," "you won't believe."
 - No corporate filler: "in today's fast-paced world," "leverage synergies," "it's important to note."
-- No fake humility or fake confidence. If you don't know, say "I don't know yet — here's how I'd find out."
+- No fake humility or fake confidence. If you don't know, say "I don't know yet. Here's how I'd find out."
 - No engagement-bait ("comment YES if…"), no thirst-bait, no manufactured outrage.
-- **Finance pieces: education/data only. Never "buy/sell/hold X."** (SEBI — see RUNBOOK.)
+- **Finance pieces: education/data only. Never "buy/sell/hold X."** (SEBI; see RUNBOOK.)
+- **NO EM-DASHES (—). This is the #1 AI tell; it reads as bot-written and kills authenticity for a
+  credibility brand.** Use a period, a comma, parentheses, or restructure the sentence. Also avoid these
+  tells: the "not just X, it's Y" construction, "the real question/story is," "here's the thing," "let's
+  dive in," and the rule-of-three cadence. Write like a person typing fast, not an essay balancing clauses.
 
 ## A calibrated before/after
 - ❌ "Anthropic released Claude Opus 4.8. The internet responded predictably."
-- ✅ "Okay, Opus 4.8 dropped and my feed instantly lost it — '#1, AI coding is solved.' I've been
-   burned by enough leaderboard headlines to not believe one until I've poked at it myself. So I went
-   digging — and here's the part nobody's saying out loud."
+- ✅ "Okay, Opus 4.8 dropped and my feed instantly lost it. '#1, AI coding is solved.' I've been burned by
+   enough leaderboard headlines to not believe one until I've poked at it myself. So I went digging, and
+   here's the part nobody's saying out loud."
 
-That's the dial. Warm, first-person, honest, ends somewhere useful.
+That's the dial. Warm, first-person, honest, ends somewhere useful. And not a single em-dash.
