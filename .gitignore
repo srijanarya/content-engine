@@ -43,6 +43,10 @@ reply-pipeline/
 # Live market data the finance posts render from (generated runtime state)
 monitor/regime_safe.json
 
+# Generated video content + internal handoff (engine code is public; output/strategy stays local)
+video/out/
+video/HANDOFF.md
+
 # Python
 __pycache__/
 *.pyc
