@@ -35,6 +35,7 @@ post_x.py
 posted_log.json
 receipt_drip.py
 ingest_performance.py
+check_posts.py
 # Browser transport, reply engine, cron + staged launchd, kill-switch, debug shots — all couple to live X
 x/
 # Reply pipeline runtime state + drafted/approved/posted replies
