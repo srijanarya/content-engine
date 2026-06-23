@@ -5,7 +5,6 @@ Wired as the `video` cron lane. Generation is autonomous + safe (no outward acti
 stays a manual/irreversible step Srijan does. Output: video/out/<stem>.mp4 + <stem>.caption.txt, plus a
 one-line digest flag so the morning ops digest surfaces "a video is ready to post".
 """
-import glob
 import re
 import subprocess
 import sys
@@ -41,9 +40,16 @@ def main() -> int:
     (OUT / (d.stem + ".caption.txt")).write_text(caption(d.read_text()))
     log = Path.home() / "autonomy" / "logs" / f"x-activity-{datetime.now():%Y-%m-%d}.md"
     log.parent.mkdir(parents=True, exist_ok=True)
+    # --upload uploads to YouTube as unlisted (safe default; flip to --privacy public in full-auto mode).
+    if "--upload" in sys.argv:
+        rc = subprocess.run([PY, str(HERE / "upload_youtube.py"), str(mp4),
+                             "--channel", "finance", "--privacy", "unlisted"]).returncode
+        action = "UPLOADED (unlisted)" if rc == 0 else "upload FAILED — manual"
+    else:
+        action = "manual upload"
     with log.open("a") as f:
-        f.write(f"{datetime.now():%H:%M} VIDEO READY to post: {mp4.name} (+caption) — manual upload\n")
-    print(f"staged {mp4} (+ caption) — ready for manual upload")
+        f.write(f"{datetime.now():%H:%M} VIDEO READY: {mp4.name} (+caption) — {action}\n")
+    print(f"staged {mp4} (+ caption) — {action}")
     return 0
 
 

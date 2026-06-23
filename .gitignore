@@ -4,6 +4,9 @@ monitor/.env.local
 .env.*
 !.env.template
 
+# YouTube OAuth client + cached channel tokens — NEVER commit
+.secrets/
+
 # Runtime state — not source
 monitor/seen_ai.json
 monitor/seen_finance.json
