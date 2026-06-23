@@ -41,6 +41,13 @@ Tweet one here.
 Tweet two here.
 """
 
+CAROUSEL_NUMBERED = """## LINKEDIN CAROUSEL (3 slides)
+
+1. **First hook.** sub line.
+2. **Body point** data +5%.
+3. **CTA** follow for receipts.
+"""
+
 
 def test_parse_carousel_splits_and_keeps_data_lines():
     s = mv.parse_slides(CAROUSEL)
@@ -51,6 +58,14 @@ def test_parse_carousel_splits_and_keeps_data_lines():
 def test_parse_falls_back_to_x_thread():
     s = mv.parse_slides(THREAD_ONLY)
     assert s == ["Tweet one here.", "Tweet two here."], s
+
+
+def test_parse_numbered_carousel():
+    # AI drafts use a "1. **...**" numbered carousel, not "**Slide N**"
+    s = mv.parse_slides(CAROUSEL_NUMBERED)
+    assert len(s) == 3, s
+    assert s[0].startswith("First hook."), s
+    assert "data +5%" in s[1], s
 
 
 def test_parse_strips_bare_label_line():

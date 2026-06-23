@@ -49,17 +49,31 @@ def _clean(line: str) -> str:
     return re.sub(r"\*\*|__|^#+\s*|^[-*>]\s*", "", line.strip()).strip()
 
 
+def _slides_from(block: str, pat: str) -> list[str]:
+    out = []
+    for b in re.split(pat, block):
+        lines = [_clean(l) for l in b.splitlines() if _clean(l)]
+        if lines and lines[0].lower() in ("hook", "cta"):
+            lines = lines[1:]
+        if lines:
+            out.append("\n".join(lines))
+    return out
+
+
 def parse_slides(md: str) -> list[str]:
-    """Per-card text, newlines preserved (data lines stay on their own line)."""
+    """Per-card text, newlines preserved (data lines stay on their own line). Handles both carousel
+    styles: '**Slide N**' (finance drafts) and '1. ...' numbered (AI drafts)."""
     car = re.search(r"LINKEDIN CAROUSEL.*?\n(.*?)(?:\n---|\Z)", md, re.S | re.I)
     if car:
-        out = []
-        for b in re.split(r"\*\*Slide\s*\d+[^\n]*\*\*", car.group(1)):
-            lines = [_clean(l) for l in b.splitlines() if _clean(l)]
-            if lines and lines[0].lower() in ("hook", "cta"):
-                lines = lines[1:]
-            if lines:
-                out.append("\n".join(lines))
+        block = car.group(1)
+        if re.search(r"\*\*Slide\s*\d+", block, re.I):
+            out = _slides_from(block, r"\*\*Slide\s*\d+[^\n]*\*\*")
+        elif re.search(r"(?m)^\s*\d+\.\s+\S", block):
+            # ponytail: numbered carousel — split on line-leading "N. "; a slide body line that itself
+            # starts with "<digit>." would over-split, acceptable for current drafts.
+            out = _slides_from(block, r"(?m)^\s*\d+\.\s+")
+        else:
+            out = _slides_from(block, r"\Z")  # no markers: degenerate single card
         if out:
             return out
     thread = re.split(r"\*\*\d+/\*\*", md.split("LINKEDIN")[0])
