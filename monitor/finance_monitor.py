@@ -123,7 +123,11 @@ def main():
     state = load_seen()
     seen_ids = set(state.get("items", []))
 
-    candidates = fetch_nse_events() + search_finance_news()
+    # SEBI: the NSE earnings calendar yields per-COMPANY events (the 2026-06-23 TCS/HCL drafts came from
+    # fetch_nse_events). This account is index/sector/macro only, so NSE events never feed the draft path.
+    # search_finance_news() (topic-level headlines) stays; post_x.py's per-company guard is the backstop
+    # if a headline still names one company. fetch_nse_events() is kept for possible internal signal use.
+    candidates = search_finance_news()
     novel = [c for c in candidates if c["id"] not in seen_ids]
 
     if not novel:

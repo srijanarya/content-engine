@@ -25,10 +25,8 @@ python3 "$MONITOR_DIR/ai_world_monitor.py" >> "$LOG" 2>&1 || echo "ai_world_moni
 echo "--- Finance monitor ---" >> "$LOG"
 python3 "$MONITOR_DIR/finance_monitor.py" >> "$LOG" 2>&1 || echo "finance_monitor failed" >> "$LOG"
 
-# Daily market wrap from the regime artifact (local-only; couples to the trading system).
-if [ -f "$MONITOR_DIR/daily_market_post.py" ]; then
-    echo "--- Daily market wrap ---" >> "$LOG"
-    python3 "$MONITOR_DIR/daily_market_post.py" >> "$LOG" 2>&1 || echo "daily_market_post failed" >> "$LOG"
-fi
+# NOTE: the daily market wrap is intentionally NOT run here. This batch fires pre-open (~08:30), but a
+# "wrap" needs the COMPLETED session's data. It runs only in the postmarket lane (x/cron/run.sh, ~16:00)
+# where regime_safe.json is post-close. Running it here produced the 2026-06-23 pre-open / stale wrap.
 
 echo "=== Done $(date) ===" >> "$LOG"
