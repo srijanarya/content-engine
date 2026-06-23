@@ -145,6 +145,8 @@ try:
         for f in sorted(posted_dir.glob("*.md")):
             if is_skip_or_meta(_body(f)):
                 rec = rlog.get(f.stem, {})
+                if rec.get("pulled"):  # self-audit confirmed it's down — no longer live, don't cry wolf
+                    continue
                 live_bad.append(rec.get("url") or rec.get("target") or f.stem)
 
     if not guard_ok:
@@ -159,10 +161,33 @@ except Exception as e:  # noqa: BLE001
     bad(f"reply-safety check errored: {e}")
 
 
-# 7) The unit tests are green ────────────────────────────────────────────────────
+# 7) The bot can pull its OWN bad live posts (self-heal is wired) ────────────────
+try:
+    sys.path.insert(0, str(HERE / "x"))
+    import xb as _xb
+    from self_audit import reply_reason as _rr
+    mjs = (HERE / "x" / "x_browser.mjs").read_text()
+    sels = (HERE / "x" / "selectors.json").read_text()
+    run_sh = (HERE / "x" / "cron" / "run.sh").read_text()
+    wired = (hasattr(_xb, "delete_post") and "delete-post" in mjs and "SEL.confirm_delete" in mjs
+             and "confirmationSheetConfirm" in sels and "self_audit.py" in run_sh)
+    catches = bool(_rr("SKIP\n\nThe post is empty.")) and _rr("Specific human reply, 71 percent on my eval.") is None
+    if wired and catches:
+        ok("self-heal is wired (audit runs after each post/reply lane; auto-deletes its own SKIP/SEBI leaks)")
+    elif not wired:
+        bad("self-heal NOT wired: missing delete_post / delete-post transport / confirm selector / run.sh step")
+    else:
+        bad("self-audit guard logic FAILED to flag the incident text")
+except Exception as e:  # noqa: BLE001
+    bad(f"self-heal check errored: {e}")
+
+
+# 8) The unit tests are green ────────────────────────────────────────────────────
 for label, rel in [("freshness", "monitor/test_daily_wrap_freshness.py"),
                    ("flood+per-company", "test_post_guards.py"),
                    ("reply-guard", "x/test_reply_guards.py"),
+                   ("self-audit", "x/test_self_audit.py"),
+                   ("sanity-gate", "x/sanity_gate.py"),
                    ("video", "video/test_make_video.py")]:
     p = HERE / rel
     if not p.exists():
