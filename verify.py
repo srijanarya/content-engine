@@ -122,9 +122,47 @@ except Exception as e:  # noqa: BLE001
     bad(f"reality check errored: {e}")
 
 
-# 6) The unit tests are green ────────────────────────────────────────────────────
+# 6) Replies can't post a model SKIP/refusal/meta note ──────────────────────────
+try:
+    sys.path.insert(0, str(HERE / "x"))
+    from reply_guard import is_skip_or_meta
+    incident = "SKIP\n\nThe post by @x is empty, so there's nothing to reply to."
+    normal = "Ran this on my own eval set and got 71 percent, lines up with what you saw."
+    guard_ok = bool(is_skip_or_meta(incident)) and is_skip_or_meta(normal) is None
+
+    def _body(p):  # frontmatter is ---\n…\n---\n<body>; same split post_replies uses
+        return p.read_text().split("---", 2)[-1].strip()
+
+    apprv = HERE / "reply-pipeline" / "approved"
+    queued_bad = [f.name for f in sorted(apprv.glob("*.md"))
+                  if is_skip_or_meta(_body(f))] if apprv.exists() else []
+
+    # Any already-LIVE reply that was a SKIP-leak — name its URL so it can be deleted.
+    logp, posted_dir = HERE / "reply-pipeline" / "reply_log.json", HERE / "reply-pipeline" / "posted"
+    rlog = json.loads(logp.read_text()).get("posted", {}) if logp.exists() else {}
+    live_bad = []
+    if posted_dir.exists():
+        for f in sorted(posted_dir.glob("*.md")):
+            if is_skip_or_meta(_body(f)):
+                rec = rlog.get(f.stem, {})
+                live_bad.append(rec.get("url") or rec.get("target") or f.stem)
+
+    if not guard_ok:
+        bad("reply guard FAILED: incident text not refused, or a normal reply was blocked")
+    elif queued_bad:
+        bad("skip/refusal drafts sit in the approved queue: " + ", ".join(queued_bad))
+    else:
+        ok("replies are safe (incident SKIP text refused; 0 skip/refusal drafts queued)")
+    if live_bad:
+        info(f"NOTE: {len(live_bad)} reply from before the fix is still LIVE — delete: {', '.join(live_bad)}")
+except Exception as e:  # noqa: BLE001
+    bad(f"reply-safety check errored: {e}")
+
+
+# 7) The unit tests are green ────────────────────────────────────────────────────
 for label, rel in [("freshness", "monitor/test_daily_wrap_freshness.py"),
                    ("flood+per-company", "test_post_guards.py"),
+                   ("reply-guard", "x/test_reply_guards.py"),
                    ("video", "video/test_make_video.py")]:
     p = HERE / rel
     if not p.exists():
