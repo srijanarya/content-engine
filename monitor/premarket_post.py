@@ -12,6 +12,9 @@ from market_common import load_safe_regime, render_finance_draft
 
 GUIDE = """Write a SHORT pre-market note in Srijan's voice for Indian markets (NIFTY).
 RULES (SEBI, auto-linted, BLOCKED if violated):
+- The % moves shown are the PRIOR session's close (yesterday), NOT today; the market has not opened.
+  Frame them as "NIFTY closed [X]% in the prior session" and describe today's setup. NEVER call today
+  flat / up / down and NEVER cite a "0.00%" or a "today" move; today has not traded yet.
 - INDEX and SECTOR level only. Describe the regime and what the data shows heading into the open.
 - NEVER name a single stock with any buy/sell/short/avoid/target view. No per-stock calls at all.
 - Observation/education framing ("here is what the setup shows"), never "do X".

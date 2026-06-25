@@ -43,6 +43,20 @@ def _change_pct(q: dict) -> float | None:
     return round(nc / prev * 100, 2)
 
 
+def _prior_session_change(k, token) -> float | None:
+    """Close-over-close % of the last COMPLETED daily candle. Used PRE-OPEN, when the live quote's
+    net_change is 0 for everything and publishing it would falsely paint the tape flat (the 2026-06-25
+    premarket incident). Filtered to candles strictly BEFORE today, so it always returns the prior
+    session's real, correctly-signed move regardless of whether a partial today-candle exists yet."""
+    from datetime import datetime, timedelta
+    to_d = datetime.now()
+    candles = k.historical_data(int(token), to_d - timedelta(days=12), to_d, "day")
+    closes = [c["close"] for c in candles if c.get("close") and c["date"].date() < to_d.date()]
+    if len(closes) < 2 or not closes[-2]:
+        return None
+    return round((closes[-1] - closes[-2]) / closes[-2] * 100, 2)
+
+
 def _load_creds() -> tuple[str, str]:
     key, tok = os.environ.get("KITE_API_KEY"), os.environ.get("KITE_ACCESS_TOKEN")
     if key and tok:
@@ -92,11 +106,38 @@ def fetch_quotes() -> dict:
             print(f"sector {keyname} ({sym}) skipped: no Kite quote", file=sys.stderr)
     if len(sectors) < 6:  # half the sectors missing => something is wrong, don't publish a thin/odd picture
         raise KiteUnavailable(f"only {len(sectors)}/12 sectors resolved from Kite")
+
+    nifty_change = _change_pct(nifty)
+    market_open = True
+    # PRE-OPEN GUARD: before the open the live quote has net_change=0 for everything, so NIFTY and every
+    # sector read 0.0%. Publishing that as a "flat / 0.00%" tape is FALSE; it buries the prior session's
+    # real move (the 2026-06-25 premarket incident). When NIFTY shows no live move, fall back to the LAST
+    # COMPLETED daily candle's close-over-close % for NIFTY and each sector, so the pre-market note
+    # describes yesterday's actual close. Fail closed if that history is unavailable.
+    if (nifty.get("net_change") in (0, 0.0, None)) or os.environ.get("KITE_FORCE_PREOPEN"):
+        market_open = False
+        try:
+            nc = _prior_session_change(k, nifty["instrument_token"])
+            if nc is None:
+                raise KiteUnavailable("pre-open: no prior-session NIFTY candle for the fallback")
+            nifty_change = nc
+            for keyname, sym in SECTORS.items():
+                sq = q.get(f"NSE:{sym}")
+                if sq and keyname in sectors:
+                    pc = _prior_session_change(k, sq["instrument_token"])
+                    if pc is not None:
+                        sectors[keyname] = pc
+        except KiteUnavailable:
+            raise
+        except Exception as e:
+            raise KiteUnavailable(f"pre-open fallback failed ({type(e).__name__}): {str(e)[:120]}")
+
     return {
         "nifty_close": round(nifty["last_price"], 2),
-        "nifty_change_pct": _change_pct(nifty),
+        "nifty_change_pct": nifty_change,
         "vix": round(vix_q.get("last_price"), 2) if vix_q.get("last_price") else None,
         "sectors": sectors,
+        "market_open": market_open,
     }
 
 
@@ -109,7 +150,17 @@ def _selfcheck():
     assert _change_pct({"net_change": 0, "ohlc": {"close": 100}}) == 0.0
     assert _change_pct({"ohlc": {"close": 0}}) is None       # no prior close -> None, never a fake 0/inf
     assert _change_pct({"net_change": 5}) is None            # missing ohlc -> None
-    print("kite_quotes selfcheck OK (sign-correct change; no fabricated values)")
+    # PRE-OPEN fallback: prior completed session's close-over-close, with any partial today-candle dropped.
+    from datetime import datetime, timedelta
+    _t = datetime.now()
+
+    class _FakeK:
+        def historical_data(self, *a, **kw):
+            return [{"date": _t - timedelta(days=2), "close": 23824.1},
+                    {"date": _t - timedelta(days=1), "close": 24021.65},
+                    {"date": _t, "close": 24050.0}]  # today's partial candle MUST be ignored
+    assert _prior_session_change(_FakeK(), 256265) == 0.83, _prior_session_change(_FakeK(), 256265)
+    print("kite_quotes selfcheck OK (sign-correct change; pre-open prior-session fallback)")
 
 
 if __name__ == "__main__":

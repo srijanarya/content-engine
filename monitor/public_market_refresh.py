@@ -142,6 +142,7 @@ def build_regime():
         "market_bias": bias,
         "nifty_close": close,
         "nifty_change_pct": chg,
+        "market_open": kq.get("market_open", True),
         "vix": vix,
         "regime_metrics": {
             "nifty_close": close, "nifty_change_pct": chg, "distance_from_ema_pct": dist,
