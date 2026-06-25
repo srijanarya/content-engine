@@ -47,6 +47,16 @@ def verify_values(text: str, regime: dict | None) -> tuple[bool, str]:
     if not regime:
         return False, "no regime to verify finance numbers against"
 
+    # 0) Degenerate pre-open snapshot: NIFTY ~0% AND every sector ~0%. A real intraday/close read never
+    #    has all sectors at exactly 0.00; this signature means the regime was captured before the market
+    #    moved (the 08:45 pre-open refresh), so a "flat / 0.00%" narrative built on it is FALSE: it
+    #    silently paints yesterday's close as a flat tape. Fail closed. (2026-06-25 premarket incident.)
+    _nifty = regime.get("nifty_change_pct")
+    _sectors = (regime.get("sector_rotation") or {}).get("all_sectors_pct") or {}
+    if _nifty is not None and _sectors and abs(_nifty) < 0.005 and all(abs(v) < 0.005 for v in _sectors.values()):
+        return False, ("degenerate pre-open regime: NIFTY 0.00% and all sectors 0.0% "
+                       "(snapshot taken before the market moved); refusing to publish a flat read")
+
     # 1) NIFTY headline % — the incident's exact failure class. Case-insensitive (label is distinctive).
     nifty = regime.get("nifty_change_pct")
     claimed = _pct_after("NIFTY", text, re.IGNORECASE)
@@ -76,6 +86,10 @@ if __name__ == "__main__":
         assert not ok and "NIFTY" in why, why
         ok, _ = verify_values("NIFTY closed +0.83% today. ENERGY -0.89%.", r)
         assert ok
+        # Degenerate pre-open snapshot (all-zero) must block (2026-06-25 premarket incident).
+        deg = {"nifty_change_pct": 0.0, "sector_rotation": {"all_sectors_pct": {"IT": 0.0, "BANK": 0.0}}}
+        ok, why = verify_values("NIFTY closed 24021.65, dead flat, Change 0.00%.", deg)
+        assert not ok and "pre-open" in why, why
         print("value_check selfcheck OK")
     else:
         print(__doc__)

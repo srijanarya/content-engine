@@ -66,6 +66,17 @@ def test_english_it_not_confused_with_sector_it():
     assert ok, reason
 
 
+def test_degenerate_preopen_regime_blocked():
+    # The 2026-06-25 premarket incident: a pre-open snapshot has NIFTY 0.00% AND every sector exactly
+    # 0.0% (nothing has traded). A "flat / 0.00%" note built on it falsely paints yesterday's green
+    # close as flat. Must block, regardless of internal consistency.
+    preopen = {"nifty_change_pct": 0.0, "sector_rotation": {"all_sectors_pct": {
+        "IT": 0.0, "BANK": 0.0, "AUTO": 0.0, "REALTY": 0.0, "ENERGY": 0.0}}}
+    text = "NIFTY closed 24021.65, dead flat. Change: 0.00%. Every sector read 0.0% this morning."
+    ok, reason = verify_values(text, preopen)
+    assert not ok and "pre-open" in reason.lower(), reason
+
+
 if __name__ == "__main__":
     for _name, _fn in sorted(globals().items()):
         if _name.startswith("test_") and callable(_fn):
