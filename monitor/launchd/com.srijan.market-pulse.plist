@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- AUTHORED, NOT INSTALLED: install at go-live after Srijan reviews the first pulse draft.
+     PLACEMENT justification (per ~/automation-migration/PLACEMENT.md): laptop LaunchAgent
+     because the job writes/reads the LOCAL aksh market-pulse SQLite (data/market_pulse_history.db)
+     and its drafts feed the laptop-bound Chrome-CDP X posting lane; no cloud copy of the aksh
+     data layer exists. ONE job runs producer + draft to avoid agent sprawl (the 61-agent lesson).
+     16:20 IST: after NSE close and after the 16:00 wrap + 16:10 market-video jobs. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.srijan.market-pulse</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>cd "$HOME/aksh_backtesting_trading" &amp;&amp; /opt/homebrew/bin/python3 -m scripts.market_pulse_daily_snapshot &amp;&amp; cd "$HOME/loop engineering/content-engine" &amp;&amp; /opt/homebrew/bin/python3 monitor/market_pulse_post.py</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>16</integer>
+    <key>Minute</key>
+    <integer>20</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/tmp/market-pulse.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/market-pulse.err</string>
+</dict>
+</plist>
