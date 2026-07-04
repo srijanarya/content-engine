@@ -2,7 +2,7 @@
 """Shared SEBI-safe render path for the daily finance products (pre-market, post-market wrap, evening
 wrap). One place loads the scrubbed regime, builds context, and runs scrub -> generate -> disclaimer.
 The actual gates live in compliance/scrub.py + generate_draft's hard lint; this only routes through
-them so every product gates identically. build_context mirrors daily_market_post.py's (kept compatible).
+them so every product gates identically. All three products (pre-market, daily wrap, evening) call this.
 """
 from __future__ import annotations
 import json, os, sys
@@ -41,6 +41,22 @@ def build_context(safe: dict) -> str:
     return "\n".join(str(x) for x in lines)
 
 
+def append_disclaimer(out_path: str) -> None:
+    """Append the standard short-form SEBI disclaimer to a finance draft — shared by every
+    finance draft path (daily wraps via render_finance_draft below, plus backtest_education_post.py
+    and blockbuster_post.py) so the footer text can never drift between lanes. Rides ON TOP of
+    the lint, never instead of it (compliance/disclaimer.md) — skipped for a BLOCKED-sebi draft,
+    since a blocked draft shouldn't look presentable with a disclaimer glued on."""
+    disc = (ENGINE_DIR / "compliance" / "disclaimer.md").read_text()
+    # Take ONLY the quoted disclaimer lines, not the "## Short form" heading, whose em-dash
+    # would otherwise land in the draft and trip the no-em-dash rule.
+    section = disc.split("## Short form")[1].split("##")[0] if "## Short form" in disc else ""
+    short = "\n".join(l for l in section.splitlines() if l.strip().startswith(">")).strip()
+    if short and "BLOCKED-sebi" not in Path(out_path).read_text():
+        with open(out_path, "a") as f:
+            f.write("\n\n---\n" + short + "\n")
+
+
 def render_finance_draft(safe: dict, guide: str, topic: str, slug: str) -> str | None:
     """scrub (fail-closed) -> generate in voice (hard-lint inside) -> append short disclaimer.
     Returns the draft path, or None if scrub refused. The draft itself carries status
@@ -58,15 +74,7 @@ def render_finance_draft(safe: dict, guide: str, topic: str, slug: str) -> str |
 
     context = build_context(safe) + "\n\n" + guide
     out = generate("finance", topic, context, slug=slug)
-
-    disc = (ENGINE_DIR / "compliance" / "disclaimer.md").read_text()
-    # Take ONLY the quoted disclaimer lines, not the "## Short form" heading, whose em-dash
-    # would otherwise land in the draft and trip the no-em-dash rule.
-    section = disc.split("## Short form")[1].split("##")[0] if "## Short form" in disc else ""
-    short = "\n".join(l for l in section.splitlines() if l.strip().startswith(">")).strip()
-    if short and "BLOCKED-sebi" not in Path(out).read_text():
-        with open(out, "a") as f:
-            f.write("\n\n---\n" + short + "\n")
+    append_disclaimer(out)
     return out
 
 

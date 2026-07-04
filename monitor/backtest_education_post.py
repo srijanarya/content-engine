@@ -108,8 +108,10 @@ def main() -> int:
         return 0
 
     from generate_draft import generate
+    from market_common import append_disclaimer
     out = generate("finance", "how we validate our own trading strategies", context,
                    slug="backtest-education")
+    append_disclaimer(out)
     print(f"Backtest-education draft: {out}")
     return 0
 

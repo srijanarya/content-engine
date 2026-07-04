@@ -71,9 +71,11 @@ def main() -> int:
         return 0
 
     from generate_draft import generate
+    from market_common import append_disclaimer
     from datetime import date
     out = generate("finance", "verified quarterly results roundup", context,
                    slug=f"blockbuster-{date.today().isoformat()}")
+    append_disclaimer(out)
     print(f"Blockbuster draft: {out}")
     return 0
 
