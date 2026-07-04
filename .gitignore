@@ -41,6 +41,8 @@ ingest_performance.py
 check_posts.py
 # Browser transport, reply engine, cron + staged launchd, kill-switch, debug shots — all couple to live X
 x/
+# Tests that import x/ modules — would ModuleNotFoundError on a fresh clone since x/ isn't shipped
+test_dm_scanner.py
 # Reply pipeline runtime state + drafted/approved/posted replies
 reply-pipeline/
 # Live market data the finance posts render from (generated runtime state)
