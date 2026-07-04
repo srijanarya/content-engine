@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- AUTHORED, NOT INSTALLED: install at go-live after Srijan reviews the first draft.
+     Weekly cadence modeled on com.srijan.weekly-loop-tuner.plist. Off-market-hours (Sun) so
+     it never competes with the daily finance trio or the market-pulse job. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.srijan.backtest-education</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>/Users/srijan/loop engineering/content-engine/monitor/backtest_education_post.py</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>0</integer>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/Users/srijan/autonomy/logs/backtest-education.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/srijan/autonomy/logs/backtest-education.err</string>
+</dict>
+</plist>
