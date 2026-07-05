@@ -76,6 +76,48 @@ def test_auto_only_lifts_finance_needs_review():
                            lane_slug=None, today=TODAY, auto_approve=True)
 
 
+# ── thread-marker parsing: BOTH generator formats (own-line + same-line) ──
+_THREAD_HEADER = "## X / TWITTER THREAD\n\n"
+
+
+def test_parse_thread_own_line_markers():
+    # the format the daily wraps emit: **N/** on its own line, text on the next
+    text = _THREAD_HEADER + "**1/**\nFirst tweet body.\n\n**2/**\nSecond tweet body.\n"
+    tweets = px.parse_thread(text)
+    # 2 numbered + the auto-appended disclaimer
+    assert tweets[:2] == ["First tweet body.", "Second tweet body."], tweets
+    assert px.SHORT_DISCLAIMER in tweets[-1]
+
+
+def test_parse_thread_same_line_markers():
+    # the format the backtest-education draft emitted, which used to parse to ZERO tweets
+    # (silent skip at post time) before the fix.
+    text = _THREAD_HEADER + "**1/** First tweet body.\n\n**2/** Second tweet body.\n"
+    tweets = px.parse_thread(text)
+    assert tweets[:2] == ["First tweet body.", "Second tweet body."], tweets
+    assert px.SHORT_DISCLAIMER in tweets[-1]
+
+
+def test_parse_thread_same_line_keeps_multiline_tweet_intact():
+    # a same-line marker whose tweet has its own internal newlines (tweet 6 of the education
+    # draft: a marker line then a list of p-values) must stay ONE tweet, not fragment.
+    text = _THREAD_HEADER + "**1/** Results:\nVRP: p=0.038\nORB: failed\n\n**2/** Next tweet.\n"
+    tweets = px.parse_thread(text)
+    assert tweets[0] == "Results:\nVRP: p=0.038\nORB: failed", tweets
+    assert tweets[1] == "Next tweet."
+
+
+def test_parse_thread_no_section_returns_empty():
+    assert px.parse_thread("## NEWSLETTER\n\nno thread here\n") == []
+
+
+def test_daily_cap_is_srijans_authorized_value():
+    # The cap value IS the authorization (Srijan's OK 2026-07-05, 3 -> 4 so a special post fits
+    # alongside the daily trio). Changing this number means getting his OK first, like the factory
+    # HeyGen budget caps — this test is the tripwire.
+    assert px.MAX_THREADS_PER_DAY == 4
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
