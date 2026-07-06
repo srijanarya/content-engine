@@ -16,7 +16,7 @@ slip through. Upgrade path: add NER (spaCy) if the ticker list proves too narrow
 seeded from the FNO universe; extend via tickers.txt.
 """
 from __future__ import annotations
-import json, re, sys
+import json, re, sys, unicodedata
 from pathlib import Path
 
 HERE = Path(__file__).parent
@@ -53,7 +53,50 @@ _DIR_IDIOMS = ("avoid reading", "avoid extrapolating", "avoid conflating", "avoi
                "avoid overreading", "avoid over-reading")
 DISCLAIMER_MARKERS = ("not investment advice", "no buy/sell", "not a recommendation",
                       "not a research report", "buy/sell/hold", "for educational",
-                      "do your own research", "consult a sebi")
+                      "do your own research", "consult a sebi",
+                      # Hindi disclaimer markers (2026-07-06, Hinglish pulse lane)
+                      "निवेश सलाह नहीं", "सिफारिश नहीं", "शैक्षिक उद्देश्य", "शिक्षा के लिए",
+                      "सेबी पंजीकृत नहीं", "सेबी-पंजीकृत नहीं")
+
+# ---------------------------------------------------------------- Hindi / Hinglish (2026-07-06)
+# The Hinglish register keeps tickers/acronyms/digits in Latin (so TICKERS matching still works);
+# the danger surface is Hindi directional verbs/phrases near a (Latin or Devanagari) name.
+# Same precision philosophy as English: IMPERATIVE forms are directional tokens; oblique/
+# infinitive forms (खरीदने/बेचना) are NOT — they are the descriptive backbone of market prose
+# ("बेचने का दबाव" = selling pressure) and their directive uses are caught by the advice
+# phrases below. ponytail: wordlist, not morphology — extend from red-team findings, and
+# romanized-Hinglish coverage is the imperatives only; NER stays the upgrade path.
+HINDI_DIRECTIONAL = {
+    "खरीदें", "खरीदो", "खरीदिए", "खरीदेंगे", "बेचें", "बेचो", "बेचिए",
+    "बुलिश", "बेयरिश", "बचें", "बचो",           # बचें = avoid (proximity-gated like English)
+    "kharido", "kharidiye", "kharidein", "becho", "bechiye", "bechein",
+}
+HINDI_DIRECTIONAL_PHRASES = (
+    "टारगेट प्राइस", "प्राइस टारगेट", "स्टॉप लॉस", "स्टॉपलॉस", "मुनाफा बुक", "प्रॉफिट बुक",
+    "खरीदने की सलाह", "बेचने की सलाह", "खरीदने की सिफारिश", "बेचने की सिफारिश",
+    "निवेश की सलाह", "खरीद लो", "बेच दो", "निवेश करें", "निवेश कर लें",
+    "kharid lo", "bech do",
+)
+HINDI_NAME_VARIANTS = {
+    "रिलायंस", "इंफोसिस", "टीसीएस", "एचडीएफसी", "आईसीआईसीआई", "कोटक", "एक्सिस",
+    "विप्रो", "मारुति", "टाइटन", "अडानी", "अदानी", "एसबीआई", "आईटीसी", "एलएंडटी",
+}
+HINDI_MULTIWORD = ("टाटा मोटर्स", "टाटा स्टील", "बजाज फाइनेंस", "एशियन पेंट्स",
+                   "सन फार्मा", "हिंदुस्तान यूनिलीवर", "भारती एयरटेल")
+# निफ्टी/सेंसेक्स are unambiguous index names → always match (Devanagari has no uppercase
+# signal, so the isupper() precision trick can't apply); common-word sectors (बैंक, आईटी…)
+# match only with a follower, mirroring the English follower rule.
+HINDI_INDEX_ALWAYS = {"निफ्टी", "बैंकनिफ्टी", "सेंसेक्स"}
+HINDI_INDEX_SECTOR = {"आईटी", "बैंक", "ऑटो", "फार्मा", "एफएमसीजी", "मेटल",
+                      "एनर्जी", "रियल्टी", "मीडिया", "इंफ्रा", "पीएसयू"}
+HINDI_SECTOR_FOLLOWERS = {"सेक्टर", "सेक्टरों", "इंडेक्स", "शेयर", "शेयरों", "स्टॉक्स"}
+
+
+def _deva_fold(s: str) -> str:
+    """Fold Devanagari nukta variants (ख़रीदें == खरीदें) so wordlists and text can't
+    disagree on a diacritic: NFD → drop nukta (U+093C) → NFC."""
+    return unicodedata.normalize(
+        "NFC", unicodedata.normalize("NFD", s).replace("़", ""))
 
 # Structured-data keys that encode a per-stock directional view.
 DANGER_KEYS = {
@@ -110,19 +153,30 @@ def _load_tickers() -> set[str]:
 
 
 TICKERS = _load_tickers()
-_WORD = re.compile(r"[A-Za-z][A-Za-z&\-]+")
+# Devanagari included (danda ।॥ U+0964/65 excluded — they are sentence punctuation, and a
+# trailing danda glued to a token would break exact-match against the wordlists).
+_WORD = re.compile(r"[A-Za-zऀ-ॣ०-ॿ][A-Za-zऀ-ॣ०-ॿ&\-]+")
+
+# Merge the Hindi lists into the live sets (before the *_NORMS snapshots below).
+DIRECTIONAL |= HINDI_DIRECTIONAL
+DIRECTIONAL_PHRASES = DIRECTIONAL_PHRASES + HINDI_DIRECTIONAL_PHRASES
+_MULTIWORD = _MULTIWORD + HINDI_MULTIWORD
+_NAME_VARIANTS |= HINDI_NAME_VARIANTS | {m.replace(" ", "") for m in HINDI_MULTIWORD}
+INDEX_SECTOR |= HINDI_INDEX_SECTOR | HINDI_INDEX_ALWAYS
+_SECTOR_FOLLOWERS |= HINDI_SECTOR_FOLLOWERS
 
 
 def _norm(tok: str) -> str:
-    return tok.lower().replace("_", "").replace("-", "")
+    return _deva_fold(tok.lower()).replace("_", "").replace("-", "")
 
 
 _NAME_NORMS = {_norm(n) for n in _NAME_VARIANTS}
 _DIR_NORMS = {_norm(d) for d in DIRECTIONAL}
+_HINDI_INDEX_ALWAYS_NORMS = {_norm(x) for x in HINDI_INDEX_ALWAYS}
 
 
 def _sentences(text: str) -> list[str]:
-    return re.split(r"(?<=[.!?\n])\s+", text)
+    return re.split(r"(?<=[.!?।\n])\s+", text)
 
 
 # Two-word valuation terms fused to one token (like _MULTIWORD company names) so they can
@@ -150,7 +204,7 @@ def lint_text(text: str, window: int = 5) -> list[dict]:
     immediately adjacent to a ticker; sector words match only when UPPERCASE or sector-qualified."""
     violations = []
     for sent in _sentences(text):
-        low = sent.lower()
+        low = _deva_fold(sent.lower())
         if any(m in low for m in DISCLAIMER_MARKERS):
             continue  # the disclaimer SAYS "no buy/sell/hold" — that's not a call
         # blank out stop-phrase regions so their words don't match
@@ -170,9 +224,13 @@ def lint_text(text: str, window: int = 5) -> list[dict]:
             up, nl = upper[i], norm[i]
             is_ticker = up in TICKERS
             is_name = nl in _NAME_NORMS
-            # sector only if uppercase token OR next token is sector/index/stocks
-            nxt = tokens[i + 1].lower() if i + 1 < len(tokens) else ""
-            is_index = (tok.isupper() and up in INDEX_SECTOR) or (up in INDEX_SECTOR and nxt in _SECTOR_FOLLOWERS)
+            # sector only if uppercase token OR next token is sector/index/stocks; Devanagari
+            # has no case, so निफ्टी/सेंसेक्स match unconditionally and common-word sectors
+            # (बैंक, आईटी…) need a follower, mirroring the English precision rule
+            nxt = _norm(tokens[i + 1]) if i + 1 < len(tokens) else ""
+            is_index = ((tok.isupper() and up in INDEX_SECTOR)
+                        or (up in INDEX_SECTOR and nxt in _SECTOR_FOLLOWERS)
+                        or nl in _HINDI_INDEX_ALWAYS_NORMS)
             if not (is_ticker or is_name or is_index):
                 continue
             lo, hi = max(0, i - window), min(len(tokens), i + window + 1)
@@ -257,6 +315,24 @@ def demo():
     assert is_safe("A DCF turns growth assumptions into a fair value estimate; garbage in, garbage out."), \
         "valuation methodology education with no named stock must pass"
     assert not is_safe({"symbol": "TCS", "fair_value_per_share": 3800}), "structured fair_value field must block"
+    # Hindi / Hinglish (2026-07-06): Devanagari used to tokenize to NOTHING (the _WORD regex
+    # was [A-Za-z]-only), so per-stock calls in Hindi sailed through. These canaries pin the fix.
+    assert not is_safe("Reliance खरीदें, टारगेट 3200"), "Hindi imperative near Latin name must block"
+    assert not is_safe("रिलायंस में बुलिश हूं, गिरावट पर खरीदें"), "Devanagari name + बुलिश must block"
+    assert not is_safe("टाटा मोटर्स बेच दो, स्टॉप लॉस 900"), "Hindi sell phrase must block"
+    assert not is_safe("ख़रीदें HDFCBANK अभी"), "nukta variant ख़रीदें must fold and block"
+    assert not is_safe("TCS kharido, target strong"), "romanized-Hinglish imperative must block"
+    assert is_safe("आईटी सेक्टर में बिकवाली रही, बैंक शेयरों में खरीदारी दिखी।"), \
+        "descriptive बिकवाली/खरीदारी (market activity) must pass"
+    assert is_safe("11 में से 8 निफ्टी सेक्टरों में ज़्यादातर शेयर 50 दिन के एवरेज के ऊपर हैं।"), \
+        "pulse breadth read must pass"
+    assert is_safe("बाजार में बेचने का दबाव रहा, मुनाफावसूली हावी रही।"), \
+        "oblique बेचने (selling pressure) is descriptive, must pass"
+    assert is_safe("यह निवेश सलाह नहीं है, खरीदने या बेचने की कोई सिफारिश नहीं।"), \
+        "the Hindi disclaimer itself must not trip the gate"
+    v = lint_text("आईटी सेक्टर से बचें इस हफ्ते")
+    assert any(x["severity"] == "warn" for x in v), "Hindi sector-avoid should warn"
+    assert is_safe("आईटी सेक्टर से बचें इस हफ्ते"), "a Hindi sector warn must not hard-fail"
     print("lint demo: all assertions passed")
 
 
