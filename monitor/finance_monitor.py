@@ -7,7 +7,7 @@ Run daily via launchd. SEBI: education/data/language-analysis only.
 from __future__ import annotations  # PEP 604 union syntax on Python 3.7+
 import json, re, sys
 from pathlib import Path
-from datetime import date, datetime
+from datetime import datetime
 
 import requests
 
@@ -27,10 +27,6 @@ WATCH_EVENTS = [
     "q1 fy", "q2 fy", "q3 fy", "q4 fy", "results", "ipo",
 ]
 
-# NSE publicly available earnings calendar — no auth needed
-NSE_CORPORATE_ACTIONS = "https://www.nseindia.com/api/event-calendar"
-
-
 def load_seen() -> dict:
     if SEEN_FILE.exists():
         return json.loads(SEEN_FILE.read_text())
@@ -39,37 +35,6 @@ def load_seen() -> dict:
 
 def save_seen(state: dict):
     SEEN_FILE.write_text(json.dumps(state, indent=2))
-
-
-def fetch_nse_events() -> list[dict]:
-    """Fetch upcoming earnings/board meetings from NSE."""
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json",
-        "Referer": "https://www.nseindia.com/",
-    }
-    try:
-        resp = requests.get(NSE_CORPORATE_ACTIONS, headers=headers, timeout=10)
-        data = resp.json()
-        events = data if isinstance(data, list) else data.get("data", [])
-        results = []
-        for ev in events[:50]:
-            symbol = str(ev.get("symbol", "")).lower()
-            purpose = str(ev.get("purpose", "")).lower()
-            company = str(ev.get("company", "")).lower()
-            if any(w in symbol or w in company for w in WATCH_COMPANIES):
-                results.append({
-                    "source": "nse",
-                    "id": f"nse-{ev.get('symbol','')}-{ev.get('date','')}",
-                    "symbol": ev.get("symbol", ""),
-                    "company": ev.get("company", ""),
-                    "purpose": ev.get("purpose", ""),
-                    "date": ev.get("date", ""),
-                })
-        return results
-    except Exception as e:
-        print(f"NSE fetch failed: {e}", file=sys.stderr)
-        return []
 
 
 def search_finance_news() -> list[dict]:
@@ -103,15 +68,7 @@ def search_finance_news() -> list[dict]:
 
 
 def build_context(item: dict) -> str:
-    if item["source"] == "nse":
-        return f"""Event: {item['company']} ({item['symbol']}) — {item['purpose']} on {item['date']}
-
-This is an upcoming earnings event for an IT services company we track.
-Write a preview piece: what language signals should we watch for in the transcript?
-What did the last transcript signal about guidance? (reference SEBI-safe data/language analysis only)
-What's the broader sector context (AI productivity deflation, deal ramp timing, macro)?"""
-    else:
-        return f"""Source: HN Finance news
+    return f"""Source: HN Finance news
 Title: {item['title']}
 URL: {item.get('url', '')}
 
@@ -123,10 +80,8 @@ def main():
     state = load_seen()
     seen_ids = set(state.get("items", []))
 
-    # SEBI: the NSE earnings calendar yields per-COMPANY events (the 2026-06-23 TCS/HCL drafts came from
-    # fetch_nse_events). This account is index/sector/macro only, so NSE events never feed the draft path.
-    # search_finance_news() (topic-level headlines) stays; post_x.py's per-company guard is the backstop
-    # if a headline still names one company. fetch_nse_events() is kept for possible internal signal use.
+    # SEBI: this account is index/sector/macro only. search_finance_news() yields topic-level headlines;
+    # post_x.py's per-company guard is the backstop if a headline still names one company.
     candidates = search_finance_news()
     novel = [c for c in candidates if c["id"] not in seen_ids]
 

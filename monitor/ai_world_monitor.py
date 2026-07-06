@@ -5,9 +5,9 @@ Drafts a content piece for anything new and notable.
 Run daily via launchd.
 """
 from __future__ import annotations  # PEP 604 union syntax on Python 3.7+
-import json, os, sys, re, time
+import json, sys, re, time
 from pathlib import Path
-from datetime import date, datetime, timedelta
+from datetime import datetime
 
 import requests
 

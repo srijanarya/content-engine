@@ -13,13 +13,6 @@ PERF_FILE = ENGINE_DIR / "content_performance.json"
 LEARNINGS_FILE = ENGINE_DIR / "monitor" / "LEARNINGS.md"
 
 
-def stats(values: list) -> dict:
-    vals = [v for v in values if v is not None]
-    if not vals:
-        return {"n": 0, "mean": None}
-    return {"n": len(vals), "mean": round(sum(vals) / len(vals), 2)}
-
-
 def main():
     data = json.loads(PERF_FILE.read_text())
     pieces = [p for p in data.get("pieces", []) if p.get("published_date")]
