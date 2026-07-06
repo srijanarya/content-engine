@@ -7,6 +7,10 @@ set -e
 MONITOR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENGINE_DIR="$(dirname "$MONITOR_DIR")"
 LOG="$MONITOR_DIR/run.log"
+# Ops-digest escalation: failures land here; the 08:10 digest globs logs/*-status.md
+# and skips empty files. Truncated each run so a recovered lane stops nagging.
+STATUS="$HOME/autonomy/logs/content-engine-status.md"
+mkdir -p "$HOME/autonomy/logs" && : > "$STATUS"
 
 echo "=== Content Engine run $(date) ===" >> "$LOG"
 
@@ -20,10 +24,10 @@ if [ -f "$MONITOR_DIR/.env.local" ]; then
 fi
 
 echo "--- AI-world monitor ---" >> "$LOG"
-python3 "$MONITOR_DIR/ai_world_monitor.py" >> "$LOG" 2>&1 || echo "ai_world_monitor failed" >> "$LOG"
+python3 "$MONITOR_DIR/ai_world_monitor.py" >> "$LOG" 2>&1 || { echo "ai_world_monitor failed" >> "$LOG"; echo "$(date '+%F %H:%M') ai_world_monitor FAILED — tail monitor/run.log" >> "$STATUS"; }
 
 echo "--- Finance monitor ---" >> "$LOG"
-python3 "$MONITOR_DIR/finance_monitor.py" >> "$LOG" 2>&1 || echo "finance_monitor failed" >> "$LOG"
+python3 "$MONITOR_DIR/finance_monitor.py" >> "$LOG" 2>&1 || { echo "finance_monitor failed" >> "$LOG"; echo "$(date '+%F %H:%M') finance_monitor FAILED — tail monitor/run.log" >> "$STATUS"; }
 
 # NOTE: the daily market wrap is intentionally NOT run here. This batch fires pre-open (~08:30), but a
 # "wrap" needs the COMPLETED session's data. It runs only in the postmarket lane (x/cron/run.sh, ~16:00)
