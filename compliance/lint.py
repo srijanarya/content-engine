@@ -30,6 +30,12 @@ HERE = Path(__file__).parent
 DIRECTIONAL = {
     "buy", "sell", "accumulate", "strongbuy", "overweight", "underweight",
     "longonly", "shortonly", "bullish", "bearish", "avoid",
+    # Valuation-flavored calls (added 2026-07-06 with the AKSH valuation workbench: a
+    # "fair value"/"undervalued" claim NEAR a named security is a per-stock view even
+    # with no buy/sell verb). Proximity-gated like every other token here, so DCF
+    # methodology education with no named stock still passes. Two-word forms are fused
+    # to one token in _prep_tokens (see _VALUATION_TERMS).
+    "undervalued", "overvalued", "mispriced", "fairvalue", "intrinsicvalue",
 }
 DIRECTIONAL_ADJACENT = {"short", "long"}  # only count when right next to a ticker (window 1)
 # Phrases (checked on the joined text) that are explicit calls.
@@ -54,6 +60,10 @@ DANGER_KEYS = {
     "side_bias", "strong_buy", "strong_buys", "aksh_strong_buys", "recommendation",
     "rec", "trade_signal", "price_target", "tp_pct", "sl_pct", "stop_loss",
     "stoploss", "action", "verdict",
+    # Valuation-workbench output fields (2026-07-06): fine inside the tier-gated B2B API,
+    # but if a content script ever embeds them in public copy that IS a per-stock view.
+    "fair_value", "intrinsic_value", "fair_value_per_share", "upside_downside_pct",
+    "implied_upside", "pv_vs_user_price_pct",
 }
 SAFE_BIAS_VALUES = {"neutral", "none", "", None}  # side_bias=neutral isn't a directional call
 
@@ -115,12 +125,20 @@ def _sentences(text: str) -> list[str]:
     return re.split(r"(?<=[.!?\n])\s+", text)
 
 
+# Two-word valuation terms fused to one token (like _MULTIWORD company names) so they can
+# sit in DIRECTIONAL and stay proximity-gated: "TCS fair value is 3800" blocks, while
+# "a DCF turns assumptions into a fair value estimate" (no named security nearby) passes.
+_VALUATION_TERMS = ("fair value", "intrinsic value")
+
+
 def _prep_tokens(text: str) -> str:
     """Sentence as the token matcher should see it: collapse multi-word company names to one token
     ("Asian Paints" -> "AsianPaints") so they actually match, and blank analytical "avoid <gerund>" idioms
     so the bare directional "avoid" can't fire next to a name."""
     for name in _MULTIWORD:
         text = re.sub(re.escape(name), name.replace(" ", ""), text, flags=re.I)
+    for term in _VALUATION_TERMS:
+        text = re.sub(re.escape(term), term.replace(" ", ""), text, flags=re.I)
     for idiom in _DIR_IDIOMS:
         text = re.sub(re.escape(idiom), " " * len(idiom), text, flags=re.I)
     return text
@@ -232,6 +250,13 @@ def demo():
     v = lint_text("avoid IT this week")
     assert any(x["severity"] == "warn" for x in v), "sector directional should warn"
     assert is_safe("avoid IT this week"), "a sector warn must not hard-fail the gate"
+    # Valuation terms (2026-07-06): per-stock valuation views block; methodology education passes
+    assert not is_safe("TCS looks undervalued at these levels"), "per-stock undervalued must block"
+    assert not is_safe("Infosys fair value works out to 1800"), "per-stock fair value must block"
+    assert not is_safe("intrinsic value of Reliance is well above the market"), "per-stock intrinsic value must block"
+    assert is_safe("A DCF turns growth assumptions into a fair value estimate; garbage in, garbage out."), \
+        "valuation methodology education with no named stock must pass"
+    assert not is_safe({"symbol": "TCS", "fair_value_per_share": 3800}), "structured fair_value field must block"
     print("lint demo: all assertions passed")
 
 
