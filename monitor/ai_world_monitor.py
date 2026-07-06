@@ -24,6 +24,8 @@ AI_KEYWORDS = {
 HN_API = "https://hacker-news.firebaseio.com/v0"
 ARXIV_API = "https://export.arxiv.org/api/query"
 
+FETCH_ERRORS: list[str] = []  # sources that errored this run; all-down → exit 1 (see main)
+
 
 def load_seen() -> dict:
     if SEEN_FILE.exists():
@@ -41,6 +43,7 @@ def hn_top_ai(hours_back: int = 25) -> list[dict]:
         ids = requests.get(f"{HN_API}/newstories.json", timeout=10).json()[:300]
     except Exception as e:
         print(f"HN fetch failed: {e}", file=sys.stderr)
+        FETCH_ERRORS.append(f"hn: {e}")
         return []
 
     cutoff = time.time() - hours_back * 3600
@@ -90,6 +93,7 @@ def arxiv_ai_recent(days_back: int = 2) -> list[dict]:
         entries = re.findall(r"<entry>(.*?)</entry>", resp.text, re.DOTALL)
     except Exception as e:
         print(f"arXiv fetch failed: {e}", file=sys.stderr)
+        FETCH_ERRORS.append(f"arxiv: {e}")
         return []
 
     results = []
@@ -119,6 +123,10 @@ def main():
     seen_ids = set(state.get("items", []))
 
     candidates = hn_top_ai() + arxiv_ai_recent()
+    if len(FETCH_ERRORS) >= 2:
+        # Every source errored (offline/DNS-down morning like 2026-07-05) — that's an outage, not a
+        # quiet news day. Fail loud so run_monitors' breaker counts it; don't touch seen-state.
+        sys.exit(f"all sources failed: {'; '.join(FETCH_ERRORS)}")
     novel = [c for c in candidates if c["id"] not in seen_ids]
 
     if not novel:

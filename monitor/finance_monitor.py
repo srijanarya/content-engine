@@ -27,6 +27,9 @@ WATCH_EVENTS = [
     "q1 fy", "q2 fy", "q3 fy", "q4 fy", "results", "ipo",
 ]
 
+FETCH_ERRORS: list[str] = []  # the single source errored → exit 1 (see main)
+
+
 def load_seen() -> dict:
     if SEEN_FILE.exists():
         return json.loads(SEEN_FILE.read_text())
@@ -64,6 +67,7 @@ def search_finance_news() -> list[dict]:
         return results[:5]
     except Exception as e:
         print(f"HN finance search failed: {e}", file=sys.stderr)
+        FETCH_ERRORS.append(f"hn_finance: {e}")
         return []
 
 
@@ -83,6 +87,10 @@ def main():
     # SEBI: this account is index/sector/macro only. search_finance_news() yields topic-level headlines;
     # post_x.py's per-company guard is the backstop if a headline still names one company.
     candidates = search_finance_news()
+    if FETCH_ERRORS:
+        # Source errored (network/DNS down) — an outage, not a quiet news day. Fail loud so
+        # run_monitors' breaker counts it; don't touch seen-state.
+        sys.exit(f"source failed: {FETCH_ERRORS[0]}")
     novel = [c for c in candidates if c["id"] not in seen_ids]
 
     if not novel:

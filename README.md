@@ -60,9 +60,9 @@ bash monitor/run_monitors.sh
 python3 learn.py
 ```
 
-Model routing is via env vars (`ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_BASE_URL`); no credentials are
-committed. Set them to point at whatever Anthropic-compatible endpoint you use, or leave them unset
-to use the default Anthropic client.
+Generation is `claude`-CLI-first (your logged-in plan). Env vars (`BULK_BASE_URL` +
+`BULK_AUTH_TOKEN` + `BULK_MODEL`) optionally add a degrade endpoint used when the CLI fails
+(e.g. a spend limit); no credentials are committed. Leave them unset to use the CLI alone.
 
 ## Design notes
 
