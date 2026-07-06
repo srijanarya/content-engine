@@ -1,0 +1,55 @@
+# L3 repo gardener — weekly health report (non-LLM lane; judgment loop reads
+# these reports and makes one small improvement per repo on a branch).
+# Convention: commits use NAMED PATHS only (no add -A — repos carry untracked
+# secrets locally; CI must model the same discipline).
+name: repo-health
+on:
+  schedule:
+    - cron: "30 2 * * 1"   # Mon 08:00 IST
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: build health report
+        run: |
+          mkdir -p .github/health
+          {
+            echo "# Repo health — $(date -u +%F)"
+            echo "- last commit: $(git log -1 --format='%h %cr — %s')"
+            echo "- commits last 30d: $(git rev-list --count --since='30 days ago' HEAD)"
+            readme_ct=$(git log -1 --format=%ct -- README.md 2>/dev/null); readme_ct=${readme_ct:-0}
+            age=$(( ( $(date +%s) - readme_ct ) / 86400 ))
+            echo "- README last touched: ${age}d ago$( [ "$age" -gt 60 ] && echo ' ⚠ stale' || true )"
+            echo "- TODO/FIXME: $(grep -rEc 'TODO|FIXME' --include='*.py' --include='*.sh' --include='*.mjs' --include='*.js' --include='*.ts' --include='*.tsx' . 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')"
+          } > .github/health/report.md
+      - name: tests (if present)
+        run: |
+          if [ -f package.json ] && jq -e '.scripts.test' package.json > /dev/null 2>&1; then
+            npm ci --no-audit --no-fund > /dev/null 2>&1 || npm install --no-audit --no-fund > /dev/null 2>&1
+            if npm test --if-present > /tmp/test.out 2>&1; then
+              echo "- tests: ✓ $(tail -1 /tmp/test.out)" >> .github/health/report.md
+            else
+              { echo "- tests: ❌ FAILING"; echo '```'; tail -8 /tmp/test.out; echo '```'; } >> .github/health/report.md
+            fi
+          elif compgen -G "test_*.py" > /dev/null || compgen -G "tests/*.py" > /dev/null; then
+            pip install -q pytest 2>/dev/null
+            if pytest -x -q > /tmp/test.out 2>&1; then
+              echo "- tests: ✓ $(tail -1 /tmp/test.out)" >> .github/health/report.md
+            else
+              { echo "- tests: ❌ FAILING"; echo '```'; tail -8 /tmp/test.out; echo '```'; } >> .github/health/report.md
+            fi
+          else
+            echo "- tests: none found" >> .github/health/report.md
+          fi
+      - name: commit report (named path only)
+        run: |
+          git config user.name "srijanarya"
+          git config user.email "74669415+srijanarya@users.noreply.github.com"
+          git add .github/health/report.md
+          git diff --cached --quiet || { git commit -m "health: weekly repo report [skip ci]"; git push; }
