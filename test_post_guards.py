@@ -8,8 +8,10 @@ Run:  python3 test_post_guards.py   (prints PASS/FAIL, exits nonzero on failure;
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import post_x as px
+px = pytest.importorskip("post_x")  # local-only module (gitignored); skip in CI
 
 TODAY = "2026-06-23"
 

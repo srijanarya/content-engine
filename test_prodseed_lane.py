@@ -11,8 +11,10 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import post_x as px
+px = pytest.importorskip("post_x")  # local-only module (gitignored); skip in CI
 from monitor.product_seed_post import SLATE, pick
 
 TODAY = "2026-07-08"  # a Wednesday

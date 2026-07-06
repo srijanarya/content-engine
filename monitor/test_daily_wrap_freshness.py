@@ -7,8 +7,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import daily_market_post as dm
+dm = pytest.importorskip("daily_market_post")  # local-only module (gitignored); skip in CI
 
 NOW = datetime(2026, 6, 23, 16, 0, 0)  # today, 4pm IST = post-close
 
