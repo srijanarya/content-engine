@@ -11,6 +11,8 @@ or a Shorts <=60s slide-budget rule), then make it pass in make_video.py / rende
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import make_video as mv
 import render_latest as rl
@@ -99,6 +101,10 @@ def test_caption_extracts_hook_and_disclaimer():
     assert "Not investment advice." in c
 
 
+@pytest.mark.skipif(
+    not (Path.home() / "Library/Caches/ms-playwright").exists(),
+    reason="Playwright cache absent (CI / non-render machine); render binary is local-only",
+)
 def test_chrome_bin_resolves():
     # the render path depends on this binary existing; fail loudly if the install moved
     assert Path(mv.chrome_bin()).exists()

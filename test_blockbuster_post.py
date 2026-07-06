@@ -11,6 +11,8 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent / "monitor"))
 import blockbuster_post as bp
@@ -45,7 +47,7 @@ def test_factual_stocks_excludes_score_and_unverified_orders_by_recency():
     db_path = _seeded_db()
     try:
         sys.path.insert(0, str(bp.AKSH))
-        import scripts.generate_blockbuster_report as gbr
+        gbr = pytest.importorskip("scripts.generate_blockbuster_report")  # lives in the local AKSH repo (not this one); skip in CI
         with mock.patch.object(gbr, "BLOCKBUSTER_DB", db_path):
             stocks = bp.factual_stocks(limit=8)
     finally:
