@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- AUTHORED, NOT INSTALLED: install at go-live after Srijan reviews the first pulse draft.
+<!-- INSTALLED 2026-07-06 (Srijan approved after reviewing the first pulse draft).
      PLACEMENT justification (per ~/automation-migration/PLACEMENT.md): laptop LaunchAgent
      because the job writes/reads the LOCAL aksh market-pulse SQLite (data/market_pulse_history.db)
      and its drafts feed the laptop-bound Chrome-CDP X posting lane; no cloud copy of the aksh
-     data layer exists. ONE job runs producer + draft to avoid agent sprawl (the 61-agent lesson).
-     16:20 IST: after NSE close and after the 16:00 wrap + 16:10 market-video jobs. -->
+     data layer exists. ONE job chains producer + draft + video spec to avoid agent sprawl (the
+     61-agent lesson) AND the draft-before-converter race that killed the wrap lane on 2026-07-06:
+     the video converter runs strictly after its draft exists. Replaces com.srijan.market-video
+     (16:10, retired 2026-07-06 — its wrap-draft writer was never scheduled and died 07-03).
+     16:20 IST: after NSE close. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -14,7 +17,7 @@
   <array>
     <string>/bin/bash</string>
     <string>-lc</string>
-    <string>cd "$HOME/aksh_backtesting_trading" &amp;&amp; /opt/homebrew/bin/python3 -m scripts.market_pulse_daily_snapshot &amp;&amp; cd "$HOME/loop engineering/content-engine" &amp;&amp; /opt/homebrew/bin/python3 monitor/market_pulse_post.py</string>
+    <string>cd "$HOME/aksh_backtesting_trading" &amp;&amp; /opt/homebrew/bin/python3 -m scripts.market_pulse_daily_snapshot &amp;&amp; cd "$HOME/loop engineering/content-engine" &amp;&amp; /opt/homebrew/bin/python3 monitor/market_pulse_post.py &amp;&amp; cd "$HOME/content creation" &amp;&amp; /opt/homebrew/bin/python3 publish/market_video.py --lane pulse</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>
@@ -26,8 +29,8 @@
   <key>RunAtLoad</key>
   <false/>
   <key>StandardOutPath</key>
-  <string>/tmp/market-pulse.log</string>
+  <string>/Users/srijan/autonomy/logs/market-pulse.log</string>
   <key>StandardErrorPath</key>
-  <string>/tmp/market-pulse.err</string>
+  <string>/Users/srijan/autonomy/logs/market-pulse.err</string>
 </dict>
 </plist>
