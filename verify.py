@@ -90,7 +90,7 @@ except Exception as e:  # noqa: BLE001
 
 # 5) Data matches the live market ───────────────────────────────────────────────
 try:
-    import public_market_refresh as pmr
+    from kite_quotes import fetch_quotes  # same authoritative Kite path the pipeline posts from
     rf = HERE / "monitor" / "regime_safe.json"
     if not rf.exists():
         info("no regime_safe.json yet — run monitor/public_market_refresh.py (nothing to post anyway)")
@@ -99,19 +99,17 @@ try:
         if safe.get("date") != TODAY:
             bad(f"data is NOT today's — regime_safe.json is dated {safe.get('date')} (today is {TODAY})")
         else:
-            _, live_nifty = pmr._meta_change("%5ENSEI")
+            live = fetch_quotes()
+            live_nifty = live["nifty_change_pct"]
             file_nifty = safe.get("nifty_change_pct")
             parts = [f"Nifty file {file_nifty}% vs live {live_nifty}%"]
             worst = abs((live_nifty or 0) - (file_nifty or 0))
             for sec in ("IT", "BANK"):
-                try:
-                    _, lp = pmr._meta_change(pmr.SECTORS[sec])
-                    fp = safe.get("sector_rotation", {}).get("all_sectors_pct", {}).get(sec)
-                    if fp is not None and lp is not None:
-                        parts.append(f"{sec} file {fp}% vs live {lp}%")
-                        worst = max(worst, abs(lp - fp))
-                except Exception:  # noqa: BLE001 - one sector failing isn't fatal to the check
-                    pass
+                lp = live["sectors"].get(sec)
+                fp = safe.get("sector_rotation", {}).get("all_sectors_pct", {}).get(sec)
+                if fp is not None and lp is not None:
+                    parts.append(f"{sec} file {fp}% vs live {lp}%")
+                    worst = max(worst, abs(lp - fp))
             # ponytail: 1.5% tolerance absorbs intraday drift between snapshot and now; a stale file
             # (the May-12 bug) diverges far past this. Tighten if posts run only post-close.
             if worst <= 1.5:
