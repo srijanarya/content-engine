@@ -69,8 +69,30 @@ def _gen_via_cli(prompt: str, system: str | None = SYSTEM_PROMPT) -> str:
     return out.stdout.strip()
 
 
+def _gen_via_failover(prompt: str, system: str | None = SYSTEM_PROMPT) -> tuple[str, str]:
+    """Opt-in path (GEN_ENGINE_FAILOVER=1): ~/bin/llm-engine tries plan-a → plan-b →
+    codex → glm with per-engine cooldown state, so a spend-capped default CLI degrades
+    instead of silently killing the lane (the 2026-07-06 all-day outage). Text on
+    stdout; the winning engine is announced on stderr as `engine=<name>`."""
+    import shutil, subprocess
+    bin_ = shutil.which("llm-engine") or str(Path.home() / "bin" / "llm-engine")
+    full = (system + "\n\n" + prompt) if system else prompt
+    # 240s per engine × up to 4 engines; outer bound leaves headroom over the sum.
+    out = subprocess.run([bin_, "--timeout", "240", full],
+                         capture_output=True, text=True, timeout=1020)
+    if out.returncode != 0 or not out.stdout.strip():
+        raise RuntimeError(f"llm-engine failed (rc={out.returncode}): {out.stderr.strip()[:300]}")
+    m = re.search(r"engine=(\S+)", out.stderr)
+    return out.stdout.strip(), (f"llm-engine:{m.group(1)}" if m else "llm-engine")
+
+
 def gen_text(prompt: str, system: str | None = SYSTEM_PROMPT) -> tuple[str, str]:
-    """CLI first (logged-in plan); degrade to the bulk endpoint on failure. Returns (text, model)."""
+    """CLI first (logged-in plan); degrade to the bulk endpoint on failure. Returns (text, model).
+
+    GEN_ENGINE_FAILOVER=1 (opt-in, see .env.template) replaces the whole ladder with
+    ~/bin/llm-engine's multi-engine failover instead."""
+    if os.environ.get("GEN_ENGINE_FAILOVER") == "1":
+        return _gen_via_failover(prompt, system)
     try:
         return _gen_via_cli(prompt, system), "claude-cli"
     except Exception as e:
