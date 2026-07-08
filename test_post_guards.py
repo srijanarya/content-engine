@@ -120,6 +120,112 @@ def test_daily_cap_is_srijans_authorized_value():
     assert px.MAX_THREADS_PER_DAY == 4
 
 
+# ── GATE 3 per-lane value-check dispatch (check_values_for_lane) ──
+def test_pulse_lane_skips_index_value_check():
+    # Regression: the deterministic market-pulse thread carries breadth %s like "IT (85%)". The index
+    # value_check reads the % after a sector code as that sector's PRICE move, so it false-blocked the
+    # pulse. The pulse lane must bypass the index gate (it is hard-lint-gated at generation, no LLM step,
+    # and carries no NIFTY headline). It must pass even with no regime present.
+    ok, _ = px.check_values_for_lane("finance", "market-pulse", "Widest breadth: IT (85%). Thinnest: PSU (12%).")
+    assert ok
+
+
+def test_pulse_detected_by_filename_too():
+    # A manual run may not pass --lane-slug; the filename marker "-market-pulse" also exempts it.
+    class P:  # minimal path stub with a .name
+        name = "2026-07-09-finance-market-pulse.md"
+    ok, _ = px.check_values_for_lane("finance", None, "Widest breadth: IT (85%).", P())
+    assert ok
+
+
+def test_finance_wrap_still_value_checked():
+    # The fake-NIFTY backstop must stay intact for the wrap/premarket/evening lanes: a sign-flipped
+    # NIFTY vs the regime still BLOCKS. (fixture-free so the __main__ runner passes too.)
+    import json, os, tempfile
+    p = os.path.join(tempfile.mkdtemp(), "r.json")
+    with open(p, "w") as f:
+        json.dump({"nifty_change_pct": 0.83}, f)
+    old = os.environ.get("REGIME_JSON")
+    os.environ["REGIME_JSON"] = p
+    try:
+        ok, why = px.check_values_for_lane("finance", "daily-market-wrap", "NIFTY closed -0.61% today.")
+    finally:
+        os.environ.pop("REGIME_JSON", None) if old is None else os.environ.__setitem__("REGIME_JSON", old)
+    assert not ok and "NIFTY" in why, why
+
+
+def test_non_finance_lane_has_no_value_gate():
+    # the audit lane (non-finance) carries no market numbers; the dispatch is a no-op.
+    ok, _ = px.check_values_for_lane("audit", "audit", "Free teardown of your backtest. DM to grab it.")
+    assert ok
+
+
+# ── earnings lane carve-outs (Phase B) ──
+def test_earnings_engine_is_eligible_despite_naming_company():
+    # earnings engine is NOT subject to the names_company per-company block:
+    # the eligible() guard only blocks engine == "finance". Auto-approve must also work.
+    assert px.eligible(
+        "2026-07-09-earnings-tcs-q3fy25.md",
+        {"status": "needs-review", "engine": "earnings",
+         "generated": TODAY, "topic": "TCS Q3FY25 results"},
+        lane_slug="earnings", today=TODAY, auto_approve=True,
+    )
+
+
+def test_earnings_engine_auto_approved():
+    # needs-review + engine: earnings + auto_approve=True must be eligible (auto-forever path)
+    fm_earn = {"status": "needs-review", "engine": "earnings",
+               "generated": TODAY, "topic": "RELIANCE Q3FY25 results"}
+    assert px.eligible("2026-07-09-earnings-reliance-q3fy25.md", fm_earn,
+                       lane_slug="earnings", today=TODAY, auto_approve=True)
+
+
+def test_earnings_gate3_routes_to_verify_earnings_not_index_check():
+    # GATE 3 for engine=earnings must NOT call the NIFTY index gate.
+    # It calls verify_earnings; with no SOURCE block it blocks (no record), NOT the NIFTY path.
+    ok, why = px.check_values_for_lane("earnings", "earnings",
+                                       "TCS Q3FY25: Revenue ₹63,973 cr (+4.5% YoY)")
+    # no path supplied → no SOURCE block → verify_earnings returns (False, "no SOURCE record ...")
+    assert not ok and "SOURCE" in why, f"expected SOURCE block error, got: ok={ok} why={why!r}"
+
+
+def test_earnings_gate3_passes_with_valid_source():
+    # Verify the full gate-3 round-trip: craft a minimal draft file, pass its Path, confirm ok.
+    import json, tempfile, os
+    from pathlib import Path
+    from compliance.earnings_check import verify_earnings
+    rec = {
+        "symbol": "TCS", "period_end": "2024-12-31", "fiscal_label": "Q3FY25",
+        "consolidated": 1, "revenue_cr": 63973.0, "ebitda_cr": 18277.0, "opm_pct": 28.57,
+        "pbt_cr": 16666.0, "pat_cr": 12444.0, "eps": 34.21,
+        "yoy_revenue_pct": 4.5, "yoy_pat_pct": 5.2,
+        "qoq_revenue_pct": 1.2, "qoq_pat_pct": 0.8,
+        "source": "xbrl", "xbrl_url": "", "verified": 1, "bcast_date": "",
+    }
+    thread = (
+        "TCS Q3FY25 (Consolidated):\n"
+        "Revenue: ₹63,973 cr (+4.5% YoY, +1.2% QoQ)\n"
+        "EBITDA: ₹18,277 cr | OPM: 28.6%\n\n"
+        "PAT: ₹12,444 cr (+5.2% YoY, +0.8% QoQ)\n"
+        "EPS: 34.21\nPBT: ₹16,666 cr"
+    )
+    draft_body = (
+        "---\nengine: earnings\n---\n\n"
+        f"## X / TWITTER THREAD\n\n{thread}\n\n"
+        f"## SOURCE\n\n```json\n{json.dumps(rec)}\n```\n"
+    )
+    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False)
+    tmp.write(draft_body); tmp.close()
+    try:
+        class P:
+            name = os.path.basename(tmp.name)
+            def read_text(self): return open(tmp.name).read()
+        ok, why = px.check_values_for_lane("earnings", "earnings", thread, P())
+        assert ok, f"valid earnings draft blocked at GATE 3: {why}"
+    finally:
+        os.unlink(tmp.name)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
