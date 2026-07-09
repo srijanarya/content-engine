@@ -254,6 +254,106 @@ def test_draft_id_is_stable_across_run_days():
     assert "2025-01-10-earnings-tcs-q3fy25.md" in b2
 
 
+# ── session reuse: ONE NSEXbrlFetcher per run (the 403-storm fix) ─────────────
+
+def test_session_reuse_single_fetcher_across_symbols():
+    """run_today must construct NSEXbrlFetcher exactly once and pass it to all symbol fetches."""
+    from unittest.mock import patch, MagicMock
+    import monitor.earnings_post as ep
+
+    fetcher_instances_passed = []
+
+    def fake_fetch_and_parse(symbol, fresh_now=None, fetcher=None, nse_calls=None):
+        fetcher_instances_passed.append(fetcher)
+        return []   # no filings — fast
+
+    with patch.object(ep, '_load_universe', return_value=["TCS", "INFY", "RELIANCE"]), \
+         patch.object(ep, '_fetch_and_parse_filings', side_effect=fake_fetch_and_parse), \
+         patch.object(ep, 'in_results_season', return_value=True), \
+         patch.object(ep, '_open_db', return_value=MagicMock(close=lambda: None)):
+        now = datetime(2026, 7, 15, 20, 0, tzinfo=_IST)
+        ep.run_today(now, dry_run=True)
+
+    assert len(fetcher_instances_passed) == 3, f"expected 3 calls, got {len(fetcher_instances_passed)}"
+    # All symbols received the SAME fetcher object (constructed once, not per symbol)
+    f0 = fetcher_instances_passed[0]
+    assert f0 is not None
+    assert all(f is f0 for f in fetcher_instances_passed), \
+        "fetcher must be the SAME instance across all symbol calls"
+
+
+# ── cross-validate: verified=0 blocks posting ─────────────────────────────────
+
+def test_cross_validate_zero_when_screener_unavailable():
+    """_try_cross_validate returns 0 when Screener is unavailable → fail-closed."""
+    import monitor.earnings_post as ep
+    from unittest.mock import patch
+
+    with patch.object(ep, '_screener_key_metrics', return_value=None):
+        result = ep._try_cross_validate("TCS", {"revenue_cr": 63973.0, "pat_cr": 12444.0}, None)
+    assert result == 0, "unavailable second source must return verified=0"
+
+
+def test_cross_validate_zero_when_values_disagree():
+    """_try_cross_validate returns 0 when Screener disagrees > 10% (SUSPICIOUS)."""
+    import monitor.earnings_post as ep
+    from unittest.mock import patch
+
+    # Screener says revenue is wildly different → cross_validate returns SUSPICIOUS
+    screener = {"revenue_cr": 5000.0, "pat_cr": 1000.0}  # vs xbrl 63973 / 12444 → >10% diff
+    with patch.object(ep, '_screener_key_metrics', return_value=screener):
+        result = ep._try_cross_validate("TCS", {"revenue_cr": 63973.0, "pat_cr": 12444.0}, None)
+    assert result == 0, "SUSPICIOUS diff must return verified=0"
+
+
+def test_verified_zero_blocks_verify_earnings():
+    """verify_earnings must block a record where verified=0 (the fail-closed gate)."""
+    from compliance.earnings_check import verify_earnings
+    _, thread = _build_thread({**_ROW_BASE, **_DELTAS}, _ROW_BASE["_bcast"])
+    bad_rec = {**_build_record(_ROW_BASE, _DELTAS), "verified": 0}
+    ok, why = verify_earnings(thread, bad_rec)
+    assert not ok and "not verified" in why
+
+
+# ── in_results_season ─────────────────────────────────────────────────────────
+
+def test_in_results_season_mid_july():
+    from monitor.earnings_post import in_results_season
+    assert in_results_season(date(2025, 7, 15)), "Jul 15 is in Q1 results season"
+
+
+def test_in_results_season_all_of_august():
+    from monitor.earnings_post import in_results_season
+    assert in_results_season(date(2025, 8, 1))
+    assert in_results_season(date(2025, 8, 31))
+
+
+def test_in_results_season_february():
+    from monitor.earnings_post import in_results_season
+    assert in_results_season(date(2025, 2, 15)), "Feb is Q3 results season"
+
+
+def test_in_results_season_false_march():
+    from monitor.earnings_post import in_results_season
+    assert not in_results_season(date(2025, 3, 1)), "Mar is off-season"
+    assert not in_results_season(date(2025, 3, 31)), "Mar is off-season"
+
+
+def test_in_results_season_false_june():
+    from monitor.earnings_post import in_results_season
+    assert not in_results_season(date(2025, 6, 1)), "Jun is off-season"
+
+
+def test_in_results_season_false_early_july():
+    from monitor.earnings_post import in_results_season
+    assert not in_results_season(date(2025, 7, 9)), "Jul 9 is before season start (Jul 10)"
+
+
+def test_in_results_season_false_december():
+    from monitor.earnings_post import in_results_season
+    assert not in_results_season(date(2025, 12, 15)), "Dec is off-season"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

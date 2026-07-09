@@ -28,6 +28,11 @@ sys.path.insert(0, str(AKSH))
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# Per-run NSE call cap: guards against hammering on a bad NSE day.
+# Each symbol makes ~2 NSE calls (results list + XBRL download); cap at 150 for a ~75-symbol run.
+# ponytail: global counter per run; per-symbol counters only if throughput matters
+NSE_RUN_CAP = 150
+
 UNIVERSE_FILE = Path(__file__).parent / "earnings_universe.txt"
 DB_PATH = ENGINE_DIR / "data" / "earnings_history.db"
 DRAFTS   = ENGINE_DIR / "drafts"
@@ -136,6 +141,26 @@ def _period_str(period_end_iso: str) -> str:
         return f"Jan-Mar {d.year}"
 
 
+# ─── season guard ────────────────────────────────────────────────────────────
+
+# Results seasons: Q3 (Jan 10–Feb 28), Q4 (Apr 10–May 31), Q1 (Jul 10–Aug 31), Q2 (Oct 10–Nov 30).
+# Off the other ~8 months → no-op so we don't poll NSE year-round.
+_SEASON_MONTHS = {
+    1: 10, 2: 1, 4: 10, 5: 1, 7: 10, 8: 1, 10: 10, 11: 1,
+    # key=month, value=start_day (1 = entire month; 10 = from 10th onward)
+}
+
+
+def in_results_season(today: Optional[date] = None) -> bool:
+    """True during the four Indian results seasons (mid-Jan/Apr/Jul/Oct through end of next month)."""
+    if today is None:
+        today = date.today()
+    start_day = _SEASON_MONTHS.get(today.month)
+    if start_day is None:
+        return False
+    return today.day >= start_day
+
+
 # ─── NSE fetch ───────────────────────────────────────────────────────────────
 
 def _load_universe() -> list[str]:
@@ -143,17 +168,86 @@ def _load_universe() -> list[str]:
             if l.strip() and not l.startswith("#")]
 
 
-def _fetch_and_parse_filings(symbol: str, fresh_now: Optional[datetime] = None) -> list[dict]:
+def _screener_key_metrics(symbol: str) -> Optional[dict]:
+    """Best-effort: fetch Screener.in consolidated quarterly data for `symbol`.
+    Returns {'revenue_cr': float|None, 'pat_cr': float|None} for the most recent quarter,
+    or None on any failure. Fail-closed: login required / network error / parse miss → None.
+    """
+    try:
+        import requests as _r
+        s = _r.Session()
+        s.headers["User-Agent"] = "Mozilla/5.0 (compatible; content-engine/1.0)"
+        resp = s.get(f"https://www.screener.in/company/{symbol}/consolidated/", timeout=10)
+        if resp.status_code != 200:
+            return None
+        html = resp.text
+        # Screener quarterly table: label td then first value td per row.
+        # ponytail: simple regex; no BeautifulSoup dependency; fails gracefully on structure changes.
+        def _first_td_val(label: str) -> Optional[float]:
+            m = re.search(
+                rf'<td[^>]*class="[^"]*text[^"]*"[^>]*>\s*{re.escape(label)}\s*</td>\s*<td[^>]*>([\d,]+(?:\.\d+)?)</td>',
+                html, re.IGNORECASE,
+            )
+            return float(m.group(1).replace(",", "")) if m else None
+        rev = _first_td_val("Sales") or _first_td_val("Revenue")
+        pat = _first_td_val("Net Profit") or _first_td_val("PAT")
+        if rev is None and pat is None:
+            return None
+        return {"revenue_cr": rev, "pat_cr": pat}
+    except Exception:
+        return None
+
+
+def _try_cross_validate(symbol: str, xbrl_metrics: dict, fetcher) -> int:
+    """Cross-validate XBRL numbers against Screener.in. Returns 1 (verified) or 0 (fail-closed).
+
+    verified=1 only when Screener agrees within tolerance (VERIFIED or MINOR_DIFF).
+    Any failure — unavailable second source, SUSPICIOUS diff, exception — returns 0.
+    """
+    try:
+        from services.nse_xbrl_fetcher import cross_validate
+        screener_vals = _screener_key_metrics(symbol)
+        if not screener_vals:
+            print(f"  {symbol}: Screener unavailable — verified=0 (fail-closed)", file=sys.stderr)
+            return 0
+        result = cross_validate(xbrl_metrics, screener_vals, symbol=symbol)
+        if result.status in ("VERIFIED", "MINOR_DIFF"):
+            return 1
+        print(
+            f"  {symbol}: cross-validate {result.status} "
+            f"(max_diff={result.max_diff_pct:.1f}%) — verified=0",
+            file=sys.stderr,
+        )
+        return 0
+    except Exception as e:
+        print(f"  {symbol}: cross-validate error — {e}; verified=0", file=sys.stderr)
+        return 0
+
+
+def _fetch_and_parse_filings(
+    symbol: str,
+    fresh_now: Optional[datetime] = None,
+    fetcher=None,
+    nse_calls: Optional[list] = None,
+) -> list[dict]:
     """Return upsert-ready rows for `symbol`.
 
     fresh_now=None     → return ALL available quarterly filings (backfill mode).
     fresh_now=datetime → only filings that are FRESH relative to it (is_fresh: same-day, or a
       late-evening filing seen the next morning). This is why a morning run surfaces yesterday-late
       filings but still drops anything stale. Prefers Consolidated over Non-Consolidated per period.
+
+    fetcher  → a shared NSEXbrlFetcher instance (created once per run by run_today / run_backfill).
+               If None, one is created for this call only (backfill convenience).
+    nse_calls → mutable [int] counter shared with run_today for the per-run cap.
     """
     from services.nse_xbrl_fetcher import NSEXbrlFetcher
     from compliance.earnings_check import is_fresh
-    fetcher = NSEXbrlFetcher()
+    if fetcher is None:
+        fetcher = NSEXbrlFetcher()  # caller didn't share one; isolated call (e.g. test)
+
+    if nse_calls is not None:
+        nse_calls[0] += 1   # count: fetch_financial_results
     filings = fetcher.fetch_financial_results(symbol, period="Quarterly")
     if not filings:
         return []
@@ -176,6 +270,8 @@ def _fetch_and_parse_filings(symbol: str, fresh_now: Optional[datetime] = None) 
         is_cons = 1 if raw_cons == "consolidated" else 0
         key = (period_d.isoformat(), is_cons)
 
+        if nse_calls is not None:
+            nse_calls[0] += 1  # count: download_xbrl
         content = fetcher.download_xbrl(fi.xbrl_url)
         if not content:
             print(f"  {symbol}: XBRL download failed for {fi.xbrl_url[:60]}", file=sys.stderr)
@@ -183,6 +279,8 @@ def _fetch_and_parse_filings(symbol: str, fresh_now: Optional[datetime] = None) 
         metrics = fetcher.parse_xbrl(content)
         if not metrics:
             continue
+
+        verified = _try_cross_validate(symbol, metrics, fetcher)
 
         rows[key] = {
             "symbol": symbol,
@@ -197,7 +295,7 @@ def _fetch_and_parse_filings(symbol: str, fresh_now: Optional[datetime] = None) 
             "eps": metrics.get("eps"),
             "source": "xbrl",
             "xbrl_url": fi.xbrl_url,
-            "verified": 1,
+            "verified": verified,
             "fetched_at": datetime.now(IST).isoformat(),
             "_bcast": fi.broad_cast_date or "",
         }
@@ -391,16 +489,37 @@ def run_today(now: datetime, dry_run: bool) -> int:
     """Scan watchlist for FRESH filings (same-day, or a late-evening filing seen next morning);
     generate one draft per new consolidated filing."""
     today = now.date()
+
+    if not in_results_season(today):
+        print(f"earnings_post: {today} is off-season for NSE results; nothing to do")
+        return 0
+
+    from services.nse_xbrl_fetcher import NSEXbrlFetcher
+    # ponytail: one fetcher/session per run — NSE cookie warmed once, not per symbol (the 403-storm fix)
+    fetcher = NSEXbrlFetcher()
+    print(f"earnings_post: NSE session initialised (one per run)")
+
     universe = _load_universe()
     conn = _open_db()
+    nse_calls = [0]   # mutable counter across symbols; checked before each symbol
     n = 0
+
     for sym in universe:
-        try:
-            rows = _fetch_and_parse_filings(sym, fresh_now=now)
-        except Exception as e:
-            print(f"  {sym}: fetch error — {e}", file=sys.stderr)
-            time.sleep(0.5)
-            continue
+        if nse_calls[0] >= NSE_RUN_CAP:
+            print(f"earnings_post: NSE run cap ({NSE_RUN_CAP} calls) reached; "
+                  f"skipping remaining {len(universe) - universe.index(sym)} symbols", file=sys.stderr)
+            break
+
+        rows = None
+        for attempt in range(3):
+            try:
+                rows = _fetch_and_parse_filings(sym, fresh_now=now, fetcher=fetcher, nse_calls=nse_calls)
+                break
+            except Exception as e:
+                if attempt == 2:
+                    print(f"  {sym}: 3 failures — {e}", file=sys.stderr)
+                else:
+                    time.sleep(2 ** attempt)   # 1s, 2s backoff
 
         if not rows:
             time.sleep(0.2)    # polite rate limit
@@ -420,15 +539,17 @@ def run_today(now: datetime, dry_run: bool) -> int:
         time.sleep(0.5)
 
     conn.close()
-    print(f"earnings_post: {n} draft(s) for {today}")
+    print(f"earnings_post: {n} draft(s) for {today} (NSE calls: {nse_calls[0]})")
     return 0
 
 
 def run_backfill(symbol: str) -> int:
     """Fetch and upsert all available quarterly filings for SYMBOL. No draft generation."""
+    from services.nse_xbrl_fetcher import NSEXbrlFetcher
     sym = symbol.strip().upper()
     print(f"Backfilling {sym}...")
-    rows = _fetch_and_parse_filings(sym)
+    fetcher = NSEXbrlFetcher()
+    rows = _fetch_and_parse_filings(sym, fetcher=fetcher)
     if not rows:
         print(f"No XBRL filings found for {sym}")
         return 1
