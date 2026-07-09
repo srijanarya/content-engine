@@ -8,11 +8,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import io, contextlib
 from monitor.earnings_post import (
-    _fiscal_label, _period_str, _pct_delta, _build_thread, _build_record,
+    _fiscal_label, _period_str, _pct_delta, _build_thread, _build_record, _write_draft,
 )
-from compliance.earnings_check import verify_earnings
-from datetime import date
+from compliance.earnings_check import verify_earnings, is_fresh
+from datetime import date, datetime, timezone, timedelta
+
+_IST = timezone(timedelta(hours=5, minutes=30))
 
 # ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -194,6 +197,61 @@ def test_source_record_has_required_keys():
 def test_source_record_verified_flag():
     rec = _record()
     assert rec["verified"] == 1
+
+
+def test_source_record_carries_broadcast_timestamp():
+    # the freshness gate needs the full broadcast timestamp (with time), not just the date
+    rec = _record()
+    assert rec.get("bcast_date") == "09-Jan-2025 21:39:43"
+
+
+# ── freshness / relevance gate (Srijan's rule: same-day, or late-evening → next-morning) ──
+
+def test_freshness_same_day():
+    assert is_fresh("09-Jan-2025 21:39:43", datetime(2025, 1, 9, 22, 0, tzinfo=_IST))[0]
+
+
+def test_freshness_late_evening_posts_next_morning():
+    assert is_fresh("09-Jan-2025 21:39:43", datetime(2025, 1, 10, 8, 30, tzinfo=_IST))[0]
+
+
+def test_freshness_stale_by_next_afternoon():
+    ok, why = is_fresh("09-Jan-2025 21:39:43", datetime(2025, 1, 10, 14, 0, tzinfo=_IST))
+    assert not ok and "stale" in why
+
+
+def test_freshness_daytime_filing_stale_next_morning():
+    # only a LATE-evening filing gets the next-morning carve-out; a 10am filing does not
+    assert not is_fresh("09-Jan-2025 10:00:00", datetime(2025, 1, 10, 8, 30, tzinfo=_IST))[0]
+
+
+def test_freshness_two_days_old_stale():
+    assert not is_fresh("09-Jan-2025 21:39:43", datetime(2025, 1, 11, 9, 0, tzinfo=_IST))[0]
+
+
+def test_freshness_missing_timestamp_fail_closed():
+    now = datetime(2025, 1, 9, 22, 0, tzinfo=_IST)
+    assert not is_fresh("", now)[0]
+    assert not is_fresh(None, now)[0]
+
+
+# ── idempotency: a result's draft id is STABLE (no date), so evening + next-morning can't double-post ──
+
+def _dry_body(today_iso: str) -> str:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        _write_draft({**_ROW_BASE}, {**_DELTAS}, today_iso, dry_run=True)
+    return buf.getvalue()
+
+
+def test_draft_id_is_stable_across_run_days():
+    b1, b2 = _dry_body("2025-01-09"), _dry_body("2025-01-10")
+    # frontmatter id is the same on both run days (the idempotency key)...
+    assert "id: earnings-tcs-q3fy25" in b1, b1[:300]
+    assert "id: earnings-tcs-q3fy25" in b2
+    # ...while the FILENAME stays dated (lane-slug + generated-day gating)
+    assert "2025-01-09-earnings-tcs-q3fy25.md" in b1
+    assert "2025-01-10-earnings-tcs-q3fy25.md" in b2
 
 
 if __name__ == "__main__":

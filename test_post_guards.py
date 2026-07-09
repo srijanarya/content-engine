@@ -7,12 +7,15 @@ Run:  python3 test_post_guards.py   (prints PASS/FAIL, exits nonzero on failure;
 """
 import sys
 from pathlib import Path
+import json
+from datetime import datetime, timezone, timedelta
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 px = pytest.importorskip("post_x")  # local-only module (gitignored); skip in CI
 
+_IST = timezone(timedelta(hours=5, minutes=30))
 TODAY = "2026-06-23"
 
 
@@ -200,7 +203,8 @@ def test_earnings_gate3_passes_with_valid_source():
         "pbt_cr": 16666.0, "pat_cr": 12444.0, "eps": 34.21,
         "yoy_revenue_pct": 4.5, "yoy_pat_pct": 5.2,
         "qoq_revenue_pct": 1.2, "qoq_pat_pct": 0.8,
-        "source": "xbrl", "xbrl_url": "", "verified": 1, "bcast_date": "",
+        "source": "xbrl", "xbrl_url": "", "verified": 1,
+        "bcast_date": datetime.now(_IST).strftime("%d-%b-%Y %H:%M:%S"),  # fresh, so the freshness gate passes
     }
     thread = (
         "TCS Q3FY25 (Consolidated):\n"
@@ -224,6 +228,39 @@ def test_earnings_gate3_passes_with_valid_source():
         assert ok, f"valid earnings draft blocked at GATE 3: {why}"
     finally:
         os.unlink(tmp.name)
+
+
+# ── earnings freshness / relevance gate at post time (Phase B.1) ──
+def _earnings_draft_text(bcast_ts, thread):
+    rec = {"symbol": "TCS", "verified": 1, "revenue_cr": 63973.0, "bcast_date": bcast_ts,
+           "ebitda_cr": None, "pbt_cr": None, "pat_cr": None, "opm_pct": None, "eps": None}
+    return (f"## X / TWITTER THREAD\n\n{thread}\n\n"
+            f"## SOURCE\n\n```json\n{json.dumps(rec)}\n```\n")
+
+
+class _DraftPath:
+    def __init__(self, text, name="2025-01-09-earnings-tcs-q3fy25.md"):
+        self._t, self.name = text, name
+
+    def read_text(self):
+        return self._t
+
+
+def test_earnings_gate_blocks_stale_broadcast():
+    # A result filed 3 days ago must be refused at post time even if its draft lingered (relevance rule).
+    stale = (datetime.now(_IST) - timedelta(days=3)).strftime("%d-%b-%Y %H:%M:%S")
+    thread = "TCS Q3FY25 (Consolidated):\nRevenue: ₹63,973 cr"
+    ok, why = px.check_values_for_lane("earnings", "earnings", thread,
+                                       _DraftPath(_earnings_draft_text(stale, thread)))
+    assert not ok and "stale" in why, f"stale earnings must block: ok={ok} why={why!r}"
+
+
+def test_earnings_gate_passes_fresh_broadcast():
+    fresh = datetime.now(_IST).strftime("%d-%b-%Y %H:%M:%S")
+    thread = "TCS Q3FY25 (Consolidated):\nRevenue: ₹63,973 cr"
+    ok, why = px.check_values_for_lane("earnings", "earnings", thread,
+                                       _DraftPath(_earnings_draft_text(fresh, thread)))
+    assert ok, f"fresh earnings must pass: why={why!r}"
 
 
 if __name__ == "__main__":

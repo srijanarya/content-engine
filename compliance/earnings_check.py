@@ -11,6 +11,15 @@ Mirrors value_check.py's _disagrees/tolerance style.
 """
 from __future__ import annotations
 import json, re, sys
+from datetime import datetime, timezone, timedelta
+
+IST = timezone(timedelta(hours=5, minutes=30))
+# Freshness / relevance window (Srijan's rule 2026-07-09): a result posts the SAME DAY; a filing
+# broadcast late in the evening (>= FRESH_LATE_HOUR IST) may still post until FRESH_MORNING_HOUR the
+# next morning; nothing older. Freshness IS relevance — the market-pulse "never post a day-old read"
+# rule, applied to earnings. Tunable.
+FRESH_LATE_HOUR = 18
+FRESH_MORNING_HOUR = 11
 
 TOL_CR  = 0.6   # ₹-crore rounding tolerance (matches 1-decimal display, e.g. 63973.0 vs 63973.4)
 TOL_PCT = 0.2   # %-point tolerance for OPM / YoY / QoQ
@@ -34,6 +43,45 @@ _CR_KEYS  = ("revenue_cr", "ebitda_cr", "pbt_cr", "pat_cr")
 
 def _to_float(s: str) -> float:
     return float(s.replace(",", "").replace("−", "-"))
+
+
+def _parse_bcast(s):
+    """NSE broadcast string -> aware IST datetime, or None. Keeps the TIME (unlike the generator's
+    date-only parse) so the late-evening window can be judged. Accepts '09-Jan-2025 21:39:43',
+    '09-Jan-2025 21:39', and date-only '31-Dec-2024' (→ 00:00, which fails the late-evening test)."""
+    if not s or not isinstance(s, str):
+        return None
+    s = s.strip()
+    for fmt in ("%d-%b-%Y %H:%M:%S", "%d-%b-%Y %H:%M", "%d-%b-%Y"):
+        try:
+            return datetime.strptime(s, fmt).replace(tzinfo=IST)
+        except ValueError:
+            continue
+    return None
+
+
+def is_fresh(bcast, now=None) -> tuple[bool, str]:
+    """Relevance gate: is an earnings result fresh enough to post? Returns (ok, reason).
+
+    Srijan's rule (2026-07-09): post the SAME DAY; a result filed late in the evening
+    (broadcast hour >= FRESH_LATE_HOUR IST) may still post until FRESH_MORNING_HOUR the next
+    morning; nothing older. FAIL-CLOSED on a missing/unparseable/future broadcast timestamp.
+    `bcast` is the NSE broadcast string or a datetime; `now` defaults to datetime.now(IST)."""
+    if now is None:
+        now = datetime.now(IST)
+    bts = bcast if isinstance(bcast, datetime) else _parse_bcast(bcast)
+    if bts is None:
+        return False, "no/unparseable broadcast timestamp"
+    if bts.tzinfo is None:
+        bts = bts.replace(tzinfo=IST)
+    age = (now.date() - bts.date()).days
+    if age < 0:
+        return False, f"broadcast in the future ({bts:%Y-%m-%d %H:%M} IST)"
+    if age == 0:
+        return True, ""
+    if age == 1 and bts.hour >= FRESH_LATE_HOUR and now.hour < FRESH_MORNING_HOUR:
+        return True, ""   # late-evening filing, posted next morning
+    return False, f"stale: filed {bts:%Y-%m-%d %H:%M} IST, now {now:%Y-%m-%d %H:%M} IST"
 
 
 def verify_earnings(thread_text: str, record: dict | None) -> tuple[bool, str]:
@@ -147,5 +195,24 @@ if __name__ == "__main__":
     )
     ok, why = verify_earnings(thread_no_delta, rec_no_delta)
     assert ok, f"no-delta path failed: {why}"
+
+    # ── freshness gate (is_fresh) ───────────────────────────────────────────────
+    _T = datetime  # brevity
+    same_day = _T(2025, 1, 9, 22, 0, tzinfo=IST)
+    assert is_fresh("09-Jan-2025 21:39:43", same_day)[0], "same-day must be fresh"
+    next_morning = _T(2025, 1, 10, 8, 30, tzinfo=IST)
+    assert is_fresh("09-Jan-2025 21:39:43", next_morning)[0], "late-evening -> next-morning must be fresh"
+    next_afternoon = _T(2025, 1, 10, 14, 0, tzinfo=IST)
+    ok, why = is_fresh("09-Jan-2025 21:39:43", next_afternoon)
+    assert not ok and "stale" in why, "late-evening filing is stale by next afternoon"
+    ok, why = is_fresh("09-Jan-2025 10:00:00", next_morning)   # yesterday DAYTIME filing
+    assert not ok, "a daytime filing is stale the next morning (only late-evening qualifies)"
+    two_days = _T(2025, 1, 11, 9, 0, tzinfo=IST)
+    assert not is_fresh("09-Jan-2025 21:39:43", two_days)[0], "two-days-old must be stale"
+    for bad in ("", None, "garbage", 12345):
+        ok, why = is_fresh(bad, same_day)
+        assert not ok, f"fail-closed expected for {bad!r}"
+    assert is_fresh("31-Dec-2024", _T(2024, 12, 31, 20, 0, tzinfo=IST))[0], "date-only same-day fresh"
+    assert not is_fresh("31-Dec-2024", _T(2025, 1, 1, 8, 0, tzinfo=IST))[0], "date-only (00:00) not late-evening"
 
     print("earnings_check selfcheck OK")

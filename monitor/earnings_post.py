@@ -143,14 +143,16 @@ def _load_universe() -> list[str]:
             if l.strip() and not l.startswith("#")]
 
 
-def _fetch_and_parse_filings(symbol: str, today: Optional[date] = None) -> list[dict]:
+def _fetch_and_parse_filings(symbol: str, fresh_now: Optional[datetime] = None) -> list[dict]:
     """Return upsert-ready rows for `symbol`.
 
-    today=None → return ALL available quarterly filings (backfill mode).
-    today=date → only filings broadcast on that date.
-    Prefers Consolidated over Non-Consolidated for the same period.
+    fresh_now=None     → return ALL available quarterly filings (backfill mode).
+    fresh_now=datetime → only filings that are FRESH relative to it (is_fresh: same-day, or a
+      late-evening filing seen the next morning). This is why a morning run surfaces yesterday-late
+      filings but still drops anything stale. Prefers Consolidated over Non-Consolidated per period.
     """
     from services.nse_xbrl_fetcher import NSEXbrlFetcher
+    from compliance.earnings_check import is_fresh
     fetcher = NSEXbrlFetcher()
     filings = fetcher.fetch_financial_results(symbol, period="Quarterly")
     if not filings:
@@ -161,9 +163,9 @@ def _fetch_and_parse_filings(symbol: str, today: Optional[date] = None) -> list[
     for fi in filings:
         if not fi.xbrl_url:
             continue
-        if today is not None:
-            bcast = _parse_nse_date(fi.broad_cast_date or "")
-            if bcast != today:
+        if fresh_now is not None:
+            ok, _why = is_fresh(fi.broad_cast_date or "", fresh_now)
+            if not ok:
                 continue
         period_d = _parse_nse_date(fi.period or "")
         if not period_d:
@@ -354,12 +356,15 @@ def _write_draft(row: dict, deltas: dict, today_iso: str, dry_run: bool) -> Opti
     sym    = row["symbol"]
     fiscal = row["fiscal_label"]
     slug   = _slug(sym, fiscal)
-    draft_id = f"{today_iso}-earnings-{slug}"
+    result_id = f"earnings-{slug}"            # STABLE per (symbol, fiscal): the idempotency key so an
+                                              # evening draft and a next-morning re-draft can't double-post
+                                              # (post_x dedups by frontmatter id).
+    draft_id  = f"{today_iso}-{result_id}"    # dated FILENAME — keeps the lane-slug + generated-day gating
     out = DRAFTS / f"{draft_id}.md"
 
     body = (
         f"---\n"
-        f"id: {draft_id}\n"
+        f"id: {result_id}\n"
         f"engine: earnings\n"
         f"topic: {sym} {fiscal} results\n"
         f"status: needs-review\n"
@@ -382,14 +387,16 @@ def _write_draft(row: dict, deltas: dict, today_iso: str, dry_run: bool) -> Opti
     return out
 
 
-def run_today(today: date, dry_run: bool) -> int:
-    """Scan watchlist for today's filings; generate one draft per new consolidated filing."""
+def run_today(now: datetime, dry_run: bool) -> int:
+    """Scan watchlist for FRESH filings (same-day, or a late-evening filing seen next morning);
+    generate one draft per new consolidated filing."""
+    today = now.date()
     universe = _load_universe()
     conn = _open_db()
     n = 0
     for sym in universe:
         try:
-            rows = _fetch_and_parse_filings(sym, today=today)
+            rows = _fetch_and_parse_filings(sym, fresh_now=now)
         except Exception as e:
             print(f"  {sym}: fetch error — {e}", file=sys.stderr)
             time.sleep(0.5)
@@ -421,7 +428,7 @@ def run_backfill(symbol: str) -> int:
     """Fetch and upsert all available quarterly filings for SYMBOL. No draft generation."""
     sym = symbol.strip().upper()
     print(f"Backfilling {sym}...")
-    rows = _fetch_and_parse_filings(sym, today=None)
+    rows = _fetch_and_parse_filings(sym)
     if not rows:
         print(f"No XBRL filings found for {sym}")
         return 1
@@ -449,7 +456,12 @@ def main() -> int:
     if args.backfill:
         return run_backfill(args.backfill)
 
-    today = date.fromisoformat(args.date) if args.date else datetime.now(IST).date()
+    if args.date:
+        d = date.fromisoformat(args.date)
+        now = datetime(d.year, d.month, d.day, 20, 0, tzinfo=IST)  # representative evening for historical/test runs
+    else:
+        now = datetime.now(IST)
+    today = now.date()
 
     # Season guard: NSE trading day only (same as other finance lanes).
     from monitor.trading_calendar import is_trading_day
@@ -457,7 +469,7 @@ def main() -> int:
         print(f"earnings_post: {today} is not an NSE trading day; nothing to do")
         return 0
 
-    return run_today(today, args.dry_run)
+    return run_today(now, args.dry_run)
 
 
 if __name__ == "__main__":
