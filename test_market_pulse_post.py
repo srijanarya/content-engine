@@ -91,6 +91,31 @@ def test_stale_snapshot_refuses():
     raise AssertionError("stale snapshot did not refuse")
 
 
+def test_newsletter_leads_with_nifty_headline_when_regime_matches():
+    orig = mpp._nifty_headline
+    mpp._nifty_headline = lambda as_of: "NIFTY closed at 24,024, up 0.59%."
+    try:
+        newsletter, _ = mpp.build_texts(SNAP)
+    finally:
+        mpp._nifty_headline = orig
+    assert newsletter.startswith("NIFTY closed at 24,024, up 0.59%."), newsletter[:60]
+
+
+def test_newsletter_omits_headline_when_regime_stale_or_absent():
+    orig = mpp._nifty_headline
+    mpp._nifty_headline = lambda as_of: ""      # stale/missing regime -> no headline
+    try:
+        newsletter, _ = mpp.build_texts(SNAP)
+    finally:
+        mpp._nifty_headline = orig
+    assert newsletter.startswith("Sector breadth check"), newsletter[:60]
+
+
+def test_nifty_headline_skips_on_date_mismatch():
+    # a snapshot date that can't match today's regime file -> "" (never state a stale number)
+    assert mpp._nifty_headline("1990-01-01") == ""
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted({k: v for k, v in globals().items()

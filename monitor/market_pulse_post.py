@@ -113,6 +113,23 @@ def macro_lines(macro: dict) -> str:
     return " · ".join(bits)
 
 
+def _nifty_headline(as_of: str) -> str:
+    """Index-move opener for the newsletter, mirroring the spoken pulse script
+    (content-creation market_video.py). Reads regime_safe.json (Kite-sourced); returns "" if the
+    file is missing/unreadable or its date != the snapshot's as_of — never state a stale number."""
+    try:
+        r = json.loads((Path(__file__).parent / "regime_safe.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not r or (r.get("date") and as_of and r["date"] != as_of):
+        return ""
+    close, pct = r.get("nifty_close"), r.get("nifty_change_pct")
+    if close is None or pct is None:
+        return ""
+    updown = "up" if pct >= 0 else "down"
+    return f"NIFTY closed at {close:,.0f}, {updown} {abs(pct):.2f}%."
+
+
 def build_texts(snap: dict) -> tuple[str, str]:
     """Returns (newsletter, x_thread); every number comes straight from the snapshot.
     House voice: no em-dashes anywhere. X tweets stay under 280 chars."""
@@ -124,6 +141,7 @@ def build_texts(snap: dict) -> tuple[str, str]:
     m_line = macro_lines(snap["macro"])
 
     newsletter = "\n\n".join(filter(None, [
+        _nifty_headline(snap["as_of"]),
         f"Sector breadth check, {nice}.",
         b_line,
         r_line,
