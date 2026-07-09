@@ -263,6 +263,36 @@ def test_earnings_gate_passes_fresh_broadcast():
     assert ok, f"fresh earnings must pass: why={why!r}"
 
 
+# ── account scoping (Phase C): Treum and @aryasrijan must not share log / cap / kill-switch ──
+def test_posted_log_path_default_unchanged():
+    # no account (or empty) → the historical posted_log.json, byte-for-byte
+    assert px._posted_log_path(None).name == "posted_log.json"
+    assert px._posted_log_path("").name == "posted_log.json"
+
+
+def test_posted_log_path_scoped_per_account():
+    assert px._posted_log_path("treum").name == "posted_log-treum.json"
+    # a scoped account gets a DIFFERENT log file → separate cap + idempotency namespace (no collision)
+    assert px._posted_log_path("treum") != px._posted_log_path(None)
+
+
+def test_account_killswitch_default_is_noop():
+    assert px._account_killswitch(None) is None
+    assert px._account_killed(None) is False
+
+
+def test_account_killswitch_toggles_one_account_only():
+    p = px._account_killswitch("treumtest")
+    assert p is not None and p.name == "POSTING_DISABLED-treumtest"
+    assert px._account_killed("treumtest") is False           # file absent → not killed
+    p.write_text("")
+    try:
+        assert px._account_killed("treumtest") is True        # file present → this account halted
+        assert px._account_killed(None) is False              # the global/default account is unaffected
+    finally:
+        p.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
