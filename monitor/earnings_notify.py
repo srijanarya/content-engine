@@ -49,7 +49,9 @@ def main() -> None:
     thread_preview = _extract_thread(body)
     now = datetime.now(IST)
     ESC_DIR.mkdir(parents=True, exist_ok=True)
-    esc = ESC_DIR / f"earnings-treum-{now:%Y%m%d-%H%M%S}.md"
+    # Idempotent: name the escalation after the DRAFT, not the run time, so re-runs while the flag is
+    # still unset overwrite one file instead of nagging twice a day. One parked draft = one escalation.
+    esc = ESC_DIR / f"earnings-treum-{draft.stem}.md"
     esc.write_text(
         f"# @TreumAlgotech earnings draft parked — review needed\n\n"
         f"**Draft:** `{draft.name}`\n"
