@@ -43,9 +43,15 @@ Then any model/human runs the login end-to-end — reads the password from Keych
 CDP_PORT=<port> node add_account.mjs --keychain x-<slug> --account <handle>
 ```
 
-Keychain items in use: `x-treum` / @TreumAlgotech (added 2026-07-10). @aryasrijan has no stored
-password yet — its session predates this and is currently live; store one if it ever needs a
-fresh login.
+Keychain items in use (service `x-<slug>`, account = keychain `-a`):
+
+| Keychain service | X handle | Login identifier to pass |
+|---|---|---|
+| `x-treum` | @TreumAlgotech | `--account TreumAlgotech` (handle) |
+| `x-aryasrijan` | @aryasrijan | `--identifier srijanaryay@gmail.com --account aryasrijan` (X wants the email) |
+
+Recovery example for aryasrijan:
+`CDP_PORT=<port> node add_account.mjs --keychain x-aryasrijan --identifier srijanaryay@gmail.com --account aryasrijan`
 
 `add_account.mjs` returns `{"ok":true,"handle":...}` on success; `{"ok":false,"reason":"challenge"}`
 if X demands an OTP/email code (it stops and leaves the headed window on that step — it never
