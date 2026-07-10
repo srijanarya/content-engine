@@ -28,19 +28,39 @@ JSON out. `{"ok":false,"error":"no session for @<handle>..."}` means the account
 logged in (or its session was lost) → go to "Fresh login" below. The `menu` field in that
 error lists what IS logged in.
 
-## Fresh login (the only human step)
+## Fresh login (fully self-serve if the password is in Keychain)
 
-No X passwords are stored on this machine (.env files, ~/.zshrc.local, Keychain — all checked
-2026-07-10). A model cannot complete this alone; it prepares, the human types:
+Store the password once (prompts, no shell history):
 
-1. Kill the headless instance **gracefully** (plain `pkill -f <profile-dir>`, never `-9`).
-2. Relaunch headed:
-   `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --user-data-dir=<profile> --remote-debugging-port=<port> --no-first-run --no-default-browser-check --hide-crash-restore-bubble "https://x.com/home"`
-3. Drive over CDP: sidebar account switcher (`[data-testid="SideNav_AccountSwitcher_Button"]`)
-   → `AccountSwitcher_AddAccount_Button` → the human enters credentials.
-4. `verify-login` until it returns the expected handle.
-5. Close gracefully, relaunch headless via `launch_chrome.sh`, verify again, THEN lift kill
-   switches.
+```sh
+security add-generic-password -s x-<slug> -a <handle> -w
+```
+
+Then any model/human runs the login end-to-end — reads the password from Keychain, drives X's
+"Add an existing account" form, never handles the secret as a flag or file:
+
+```sh
+CDP_PORT=<port> node add_account.mjs --keychain x-<slug> --account <handle>
+```
+
+Keychain items in use: `x-treum` / @TreumAlgotech (added 2026-07-10). @aryasrijan has no stored
+password yet — its session predates this and is currently live; store one if it ever needs a
+fresh login.
+
+`add_account.mjs` returns `{"ok":true,"handle":...}` on success; `{"ok":false,"reason":"challenge"}`
+if X demands an OTP/email code (it stops and leaves the headed window on that step — it never
+guesses a code, so an OTP challenge is still a human moment). After a successful add: close the
+headed Chrome **gracefully** (`pkill -f <profile-dir>`, never `-9`), relaunch headless via
+`launch_chrome.sh`, `verify-login` to confirm the handle persisted, THEN lift kill switches.
+
+### Form gotchas add_account.mjs already handles (X's onboarding/web jf-form)
+- It is a multi-step wizard that **preloads both username and password inputs into the DOM at
+  once** — an `isVisible()` check on the password field is useless. Type the identifier, press
+  **Enter** to advance to the enter-password step, then fill the password there.
+- Inputs are React-controlled: `fill()`/`{force}` bypasses the events React needs, so the form
+  submits empty. Use focus + `pressSequentially` (real keystrokes).
+- The submit is a **testid-less** `<button>Continue</button>` (the `button[type=submit]` inside
+  the form is hidden). Click by role+name `/^Continue$|^Log in$/`, Enter as fallback.
 
 ## Hard-won rules (each cost an incident on 2026-07-10)
 
