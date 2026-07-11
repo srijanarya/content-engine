@@ -25,7 +25,9 @@ NESTLEIND
 TECHM
 NTPC
 POWERGRID
-TATAMOTORS
+# TATAMOTORS demerged Oct 2025 -> two listings (verified on Screener 2026-07-11):
+TMPV
+TMCV
 TATASTEEL
 JSWSTEEL
 ADANIENT
@@ -41,14 +43,14 @@ HDFCLIFE
 HEROMOTOCO
 HINDALCO
 INDUSINDBK
-LTIM
+# LTIM: 404 on Screener 2026-07-11 (LTIM/LTIMINDTREE/LTI all dead) — find the live slug before re-adding
 M&M
 ONGC
-SBILIFE
+# SBILIFE: page loads but insurer format has no parseable quarters table (2026-07-11) — needs a parser tweak before re-adding
 TATACONSUM
 BAJAJ-AUTO
 BAJAJFINSV
-ZOMATO
+ETERNAL
 APOLLOHOSP
 BRITANNIA
 HAVELLS
