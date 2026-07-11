@@ -123,6 +123,14 @@ def test_daily_cap_is_srijans_authorized_value():
     assert px.MAX_THREADS_PER_DAY == 4
 
 
+def test_backtest_education_lane_has_sunday_window():
+    # Weekly lane installed 2026-07-11 (Srijan's go; first post reviewed 2026-07-06). The plist
+    # fires Sun 09:30, so the window must open at 9 or the run generates then "Hold"s forever —
+    # the exact premarket-note trap this dict exists to prevent. post_x.py is gitignored; this
+    # pin is the durable record of the window.
+    assert px.LANE_WINDOWS["backtest-education"] == (9, 13)
+
+
 # ── GATE 3 per-lane value-check dispatch (check_values_for_lane) ──
 def test_pulse_lane_skips_index_value_check():
     # Regression: the deterministic market-pulse thread carries breadth %s like "IT (85%)". The index

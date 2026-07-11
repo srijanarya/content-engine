@@ -1,16 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- AUTHORED, NOT INSTALLED: install at go-live after Srijan reviews the first draft.
-     Weekly cadence modeled on com.srijan.weekly-loop-tuner.plist. Off-market-hours (Sun) so
-     it never competes with the daily finance trio or the market-pulse job. -->
+<!-- INSTALLED 2026-07-11 (first draft reviewed+posted 2026-07-06; Srijan's go 2026-07-11).
+     Dispatches via x/cron/run.sh so the weekly draft is also POSTED (generator alone left
+     drafts unposted). Off-market-hours (Sun) so it never competes with the daily finance
+     trio or the market-pulse job; post window pinned in LANE_WINDOWS["backtest-education"]. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
   <string>com.srijan.backtest-education</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/opt/homebrew/bin/python3</string>
-    <string>/Users/srijan/loop engineering/content-engine/monitor/backtest_education_post.py</string>
+    <string>/bin/bash</string>
+    <string>/Users/srijan/loop engineering/content-engine/x/cron/run.sh</string>
+    <string>backtest-education</string>
   </array>
   <key>StartCalendarInterval</key>
   <dict>

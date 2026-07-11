@@ -71,6 +71,38 @@ def test_build_context_has_no_score_or_advisory_language():
         assert banned.lower() not in ctx.lower(), banned
 
 
+def test_missing_table_returns_empty_not_crash():
+    """Pre-season DB (file exists, no table yet): reader returns [], never raises."""
+    f = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    db_path = Path(f.name)
+    try:
+        sys.path.insert(0, str(bp.AKSH))
+        gbr = pytest.importorskip("scripts.generate_blockbuster_report")
+        with mock.patch.object(gbr, "BLOCKBUSTER_DB", db_path):
+            assert bp.factual_stocks(limit=8) == []
+    finally:
+        db_path.unlink()
+
+
+def test_main_exits_zero_when_no_rows():
+    """A scheduled off-season probe must exit 0, not false-alarm."""
+    with mock.patch.object(bp, "factual_stocks", return_value=[]), \
+         mock.patch.object(sys, "argv", ["blockbuster_post.py"]):
+        assert bp.main() == 0
+
+
+def test_escalate_is_idempotent_per_draft():
+    with tempfile.TemporaryDirectory() as td:
+        with mock.patch.object(bp, "ESC_DIR", Path(td)):
+            draft = Path(td) / "2026-07-11-finance-blockbuster.md"
+            bp.escalate(draft)
+            bp.escalate(draft)   # re-run overwrites, never duplicates
+            escs = list(Path(td).glob("blockbuster-*.md"))
+            assert len(escs) == 1, escs
+            body = escs[0].read_text()
+            assert "Srijan posts manually" in body and draft.name in body
+
+
 def test_empty_stocks_refuses():
     try:
         bp.build_context([])
