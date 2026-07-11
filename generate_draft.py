@@ -60,8 +60,10 @@ def _gen_via_cli(prompt: str, system: str | None = SYSTEM_PROMPT) -> str:
     """Primary path: the `claude` CLI (uses your logged-in plan, works headless)."""
     import subprocess
     full = (system + "\n\n" + prompt) if system else prompt
+    from claude_env import claude_env  # factory-plan routing (srijanaryaji@), 2026-07-12
     out = subprocess.run(
         ["claude", "-p", full], capture_output=True, text=True, timeout=300,
+        env=claude_env(),
     )
     if out.returncode != 0 or not out.stdout.strip():
         err = (out.stderr.strip() or out.stdout.strip())[:300]  # spend-limit msg lands on stdout
