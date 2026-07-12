@@ -43,7 +43,8 @@ HDFCLIFE
 HEROMOTOCO
 HINDALCO
 INDUSINDBK
-# LTIM: 404 on Screener 2026-07-11 (LTIM/LTIMINDTREE/LTI all dead) — find the live slug before re-adding
+# LTIMindtree renamed to LTM (confirmed 2026-07-12: business-standard Q1FY27 coverage uses LTM; it filed Sat 2026-07-11)
+LTM
 M&M
 ONGC
 # SBILIFE: page loads but insurer format has no parseable quarters table (2026-07-11) — needs a parser tweak before re-adding

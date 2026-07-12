@@ -354,6 +354,15 @@ def test_in_results_season_false_december():
     assert not in_results_season(date(2025, 12, 15)), "Dec is off-season"
 
 
+def test_earnings_lane_has_no_trading_day_gate():
+    """Pin 2026-07-12: filings land on weekends (Sat 2026-07-11: DMart/LTM/Avantel) —
+    the earnings-treum run.sh block must NOT gate on trading_day; premarket/wrap lanes keep it."""
+    run_sh = (Path(__file__).resolve().parent / "x" / "cron" / "run.sh").read_text()
+    block = run_sh.split("earnings-treum)", 1)[1].split(";;", 1)[0]
+    assert "trading_day ||" not in block, "earnings-treum must run 7 days/week (weekend filings)"
+    assert "trading_day ||" in run_sh, "the session lanes' trading_day gate must stay"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
