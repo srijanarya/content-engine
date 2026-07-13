@@ -4,13 +4,18 @@
 Run:  python3 test_earnings_post.py   (exits nonzero on failure; pytest-discoverable)
 """
 import json, re, sys
+import tempfile
+import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import io, contextlib
+import monitor.earnings_post as earnings_post
 from monitor.earnings_post import (
     _fiscal_label, _period_str, _pct_delta, _build_thread, _build_record, _write_draft,
+    write_lane_health,
 )
 from compliance.earnings_check import verify_earnings, is_fresh
 from datetime import date, datetime, timezone, timedelta
@@ -361,6 +366,104 @@ def test_earnings_lane_has_no_trading_day_gate():
     block = run_sh.split("earnings-treum)", 1)[1].split(";;", 1)[0]
     assert "trading_day ||" not in block, "earnings-treum must run 7 days/week (weekend filings)"
     assert "trading_day ||" in run_sh, "the session lanes' trading_day gate must stay"
+
+
+class EarningsHealthTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.engine_dir = Path(self.tmp.name)
+        self.x_dir = self.engine_dir / "x"
+        self.x_dir.mkdir()
+        self.health_file = self.x_dir / "earnings_lane_health.json"
+        self.live_flag = self.x_dir / "EARNINGS_TREUM_LIVE"
+        self.status_file = self.x_dir / "x-cron-status.md"
+
+        for target, value in (
+            ("ENGINE_DIR", self.engine_dir),
+            ("HEALTH_FILE", self.health_file),
+            ("LIVE_FLAG", self.live_flag),
+        ):
+            patcher = patch.object(earnings_post, target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.addCleanup(self.tmp.cleanup)
+
+    def outcomes(self, **overrides):
+        values = {
+            "fetch_attempts": 0,
+            "fetch_successes": 0,
+            "fetch_failures": 0,
+            "filings_found": 0,
+            "drafts_written": 0,
+            "last_error": None,
+            "is_403": False,
+        }
+        values.update(overrides)
+        return values
+
+    def health(self):
+        return json.loads(self.health_file.read_text())
+
+    def status(self):
+        return self.status_file.read_text() if self.status_file.exists() else ""
+
+    def test_off_season_empty_run_does_not_increment_or_escalate(self):
+        self.live_flag.touch()
+        with patch.object(earnings_post, "in_results_season", lambda *a: False):
+            write_lane_health(self.outcomes(fetch_attempts=5, fetch_successes=5))
+        self.assertEqual(self.health()["consecutive_empty_runs"], 0)
+        self.assertNotIn("FAILED", self.status())
+
+    def test_partial_failure_in_season_increments_without_total_failure(self):
+        self.live_flag.touch()
+        with patch.object(earnings_post, "in_results_season", lambda *a: True):
+            write_lane_health(self.outcomes(fetch_attempts=10, fetch_successes=7, fetch_failures=3))
+        self.assertEqual(self.health()["consecutive_empty_runs"], 1)
+        self.assertNotIn("total-failure", self.status())
+
+    def test_total_failure_escalates_only_when_live(self):
+        self.live_flag.touch()
+        write_lane_health(self.outcomes(fetch_attempts=10, fetch_failures=10))
+        self.assertIn("FAILED earnings-treum", self.status())
+        self.assertIn("total-failure", self.status())
+
+        self.status_file.unlink()
+        self.live_flag.unlink()
+        write_lane_health(self.outcomes(fetch_attempts=10, fetch_failures=10))
+        self.assertEqual(self.status(), "")
+
+    def test_403_escalates_and_records_iso_timestamp(self):
+        self.live_flag.touch()
+        write_lane_health(self.outcomes(fetch_attempts=1, fetch_failures=1, is_403=True))
+        self.assertIn("FAILED earnings-treum", self.status())
+        self.assertIn("403", self.status())
+        self.assertIsNotNone(self.health()["last_403"])
+        datetime.fromisoformat(self.health()["last_403"])
+
+    def test_three_in_season_empty_runs_escalate_then_filing_resets(self):
+        self.live_flag.touch()
+        empty = self.outcomes(fetch_attempts=1, fetch_successes=1)
+        with patch.object(earnings_post, "in_results_season", lambda *a: True):
+            write_lane_health(empty)
+            write_lane_health(empty)
+            write_lane_health(empty)
+            self.assertIn("consecutive-empty-runs=3", self.status())
+            write_lane_health(self.outcomes(fetch_attempts=1, fetch_successes=1, filings_found=1))
+        self.assertEqual(self.health()["consecutive_empty_runs"], 0)
+
+    def test_health_schema_is_complete_and_last_run_is_iso(self):
+        write_lane_health(self.outcomes(fetch_attempts=1, fetch_successes=1))
+        health = self.health()
+        self.assertTrue({
+            "last_run", "last_fetch_ok", "last_403", "last_error",
+            "fetch_attempts", "fetch_successes", "fetch_failures", "filings_found",
+            "drafts_written", "consecutive_empty_runs",
+        }.issubset(health))
+        datetime.fromisoformat(health["last_run"])
+
+    def test_source_has_no_not_an_nse_trading_day_guard(self):
+        source = Path(earnings_post.__file__).read_text()
+        self.assertNotIn("not an NSE trading day", source)
 
 
 if __name__ == "__main__":

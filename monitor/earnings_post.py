@@ -2,7 +2,7 @@
 """Earnings filing ingester + deterministic draft generator for @TreumAlgotech.
 
 Pipeline:
-  season guard (NSE trading day)
+  results-season guard
   → poll NSE corporates-financial-results for each watchlist symbol, filter to today's broadCastDate
   → fetch + parse XBRL numbers (consolidated preferred over standalone)
   → upsert to data/earnings_history.db (INSERT OR REPLACE, idempotent)
@@ -16,7 +16,7 @@ Pipeline:
 --dry-run:          print draft, do not write to disk.
 """
 from __future__ import annotations
-import argparse, json, os, re, sqlite3, sys, time
+import argparse, json, os, re, sqlite3, sys, tempfile, time
 from datetime import date, datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -36,6 +36,8 @@ NSE_RUN_CAP = 150
 UNIVERSE_FILE = Path(__file__).parent / "earnings_universe.txt"
 DB_PATH = ENGINE_DIR / "data" / "earnings_history.db"
 DRAFTS   = ENGINE_DIR / "drafts"
+HEALTH_FILE = ENGINE_DIR / "x" / "earnings_lane_health.json"
+LIVE_FLAG = ENGINE_DIR / "x" / "EARNINGS_TREUM_LIVE"
 
 DISCLAIMER = ("Data & language analysis, educational only. Not investment advice; "
               "no buy/sell/hold. Not a SEBI-registered analyst.")
@@ -436,6 +438,60 @@ def _build_record(row: dict, deltas: dict) -> dict:
 
 # ─── main ────────────────────────────────────────────────────────────────────
 
+def write_lane_health(outcomes: dict) -> None:
+    """Atomically persist the earnings lane's fetch outcome and escalate live failures."""
+    now = datetime.now(IST).isoformat()
+    try:
+        previous = json.loads(HEALTH_FILE.read_text())
+        if not isinstance(previous, dict):
+            previous = {}
+    except (OSError, json.JSONDecodeError):
+        previous = {}
+
+    previous_empty = previous.get("consecutive_empty_runs", 0)
+    if not isinstance(previous_empty, int):
+        previous_empty = 0
+    if outcomes["filings_found"]:
+        consecutive_empty_runs = 0
+    elif not outcomes["fetch_successes"]:
+        consecutive_empty_runs = 0
+    elif in_results_season():
+        consecutive_empty_runs = previous_empty + 1
+    else:
+        consecutive_empty_runs = previous_empty
+
+    health = {
+        "last_run": now,
+        "last_fetch_ok": now if outcomes["fetch_successes"] else previous.get("last_fetch_ok"),
+        "last_403": now if outcomes["is_403"] else previous.get("last_403"),
+        "last_error": outcomes["last_error"],
+        "fetch_attempts": outcomes["fetch_attempts"],
+        "fetch_successes": outcomes["fetch_successes"],
+        "fetch_failures": outcomes["fetch_failures"],
+        "filings_found": outcomes["filings_found"],
+        "drafts_written": outcomes["drafts_written"],
+        "consecutive_empty_runs": consecutive_empty_runs,
+    }
+    HEALTH_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=HEALTH_FILE.parent, delete=False) as tmp:
+        json.dump(health, tmp)
+        tmp.write("\n")
+        tmp_name = tmp.name
+    os.replace(tmp_name, HEALTH_FILE)
+
+    reasons = []
+    if outcomes["fetch_attempts"] and outcomes["fetch_failures"] == outcomes["fetch_attempts"]:
+        reasons.append("total-failure")
+    if outcomes["is_403"]:
+        reasons.append("403")
+    if consecutive_empty_runs >= 3:
+        reasons.append(f"consecutive-empty-runs={consecutive_empty_runs}")
+    if reasons and LIVE_FLAG.exists():
+        line = f"FAILED earnings-treum {now} {','.join(reasons)}"
+        with (ENGINE_DIR / "x" / "x-cron-status.md").open("a") as status:
+            status.write(line + "\n")
+        print(f"ESCALATION {line}", file=sys.stderr)
+
 def _slug(sym: str, fiscal: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", f"{sym}-{fiscal}".lower()).strip("-")
 
@@ -489,58 +545,71 @@ def run_today(now: datetime, dry_run: bool) -> int:
     """Scan watchlist for FRESH filings (same-day, or a late-evening filing seen next morning);
     generate one draft per new consolidated filing."""
     today = now.date()
-
-    if not in_results_season(today):
-        print(f"earnings_post: {today} is off-season for NSE results; nothing to do")
-        return 0
-
-    from services.nse_xbrl_fetcher import NSEXbrlFetcher
-    # ponytail: one fetcher/session per run — NSE cookie warmed once, not per symbol (the 403-storm fix)
-    fetcher = NSEXbrlFetcher()
-    print(f"earnings_post: NSE session initialised (one per run)")
-
-    universe = _load_universe()
-    conn = _open_db()
-    nse_calls = [0]   # mutable counter across symbols; checked before each symbol
+    outcomes = {
+        "fetch_attempts": 0, "fetch_successes": 0, "fetch_failures": 0,
+        "filings_found": 0, "drafts_written": 0, "last_error": None, "is_403": False,
+    }
     n = 0
+    try:
+        if not in_results_season(today):
+            print(f"earnings_post: {today} is off-season for NSE results; nothing to do")
+            return 0
 
-    for sym in universe:
-        if nse_calls[0] >= NSE_RUN_CAP:
-            print(f"earnings_post: NSE run cap ({NSE_RUN_CAP} calls) reached; "
-                  f"skipping remaining {len(universe) - universe.index(sym)} symbols", file=sys.stderr)
-            break
+        from services.nse_xbrl_fetcher import NSEXbrlFetcher
+        # ponytail: one fetcher/session per run — NSE cookie warmed once, not per symbol (the 403-storm fix)
+        fetcher = NSEXbrlFetcher()
+        print(f"earnings_post: NSE session initialised (one per run)")
 
-        rows = None
-        for attempt in range(3):
-            try:
-                rows = _fetch_and_parse_filings(sym, fresh_now=now, fetcher=fetcher, nse_calls=nse_calls)
+        universe = _load_universe()
+        conn = _open_db()
+        nse_calls = [0]   # mutable counter across symbols; checked before each symbol
+
+        for sym in universe:
+            if nse_calls[0] >= NSE_RUN_CAP:
+                print(f"earnings_post: NSE run cap ({NSE_RUN_CAP} calls) reached; "
+                      f"skipping remaining {len(universe) - universe.index(sym)} symbols", file=sys.stderr)
                 break
-            except Exception as e:
-                if attempt == 2:
-                    print(f"  {sym}: 3 failures — {e}", file=sys.stderr)
-                else:
-                    time.sleep(2 ** attempt)   # 1s, 2s backoff
 
-        if not rows:
-            time.sleep(0.2)    # polite rate limit
-            continue
+            outcomes["fetch_attempts"] += 1
+            rows = None
+            for attempt in range(3):
+                try:
+                    rows = _fetch_and_parse_filings(sym, fresh_now=now, fetcher=fetcher, nse_calls=nse_calls)
+                    outcomes["fetch_successes"] += 1
+                    outcomes["filings_found"] += len(rows)
+                    break
+                except Exception as e:
+                    outcomes["last_error"] = f"{sym}: {e}"
+                    outcomes["is_403"] |= "403" in str(e)
+                    if attempt == 2:
+                        outcomes["fetch_failures"] += 1
+                        print(f"  {sym}: 3 failures — {e}", file=sys.stderr)
+                    else:
+                        time.sleep(2 ** attempt)   # 1s, 2s backoff
 
-        # Prefer consolidated; fall back to standalone if only standalone is available.
-        cons = [r for r in rows if r["consolidated"] == 1]
-        best = cons[0] if cons else rows[0]
+            if not rows:
+                time.sleep(0.2)    # polite rate limit
+                continue
 
-        _upsert(conn, best)
-        deltas = _compute_deltas(conn, best)
-        try:
-            _write_draft(best, deltas, today.isoformat(), dry_run)
-            n += 1
-        except SystemExit as e:
-            print(f"  {sym}: {e}", file=sys.stderr)
-        time.sleep(0.5)
+            # Prefer consolidated; fall back to standalone if only standalone is available.
+            cons = [r for r in rows if r["consolidated"] == 1]
+            best = cons[0] if cons else rows[0]
 
-    conn.close()
-    print(f"earnings_post: {n} draft(s) for {today} (NSE calls: {nse_calls[0]})")
-    return 0
+            _upsert(conn, best)
+            deltas = _compute_deltas(conn, best)
+            try:
+                _write_draft(best, deltas, today.isoformat(), dry_run)
+                n += 1
+            except SystemExit as e:
+                print(f"  {sym}: {e}", file=sys.stderr)
+            time.sleep(0.5)
+
+        conn.close()
+        print(f"earnings_post: {n} draft(s) for {today} (NSE calls: {nse_calls[0]})")
+        return 0
+    finally:
+        outcomes["drafts_written"] = n
+        write_lane_health(outcomes)
 
 
 def run_backfill(symbol: str) -> int:
@@ -582,13 +651,8 @@ def main() -> int:
         now = datetime(d.year, d.month, d.day, 20, 0, tzinfo=IST)  # representative evening for historical/test runs
     else:
         now = datetime.now(IST)
-    today = now.date()
-
-    # Season guard: NSE trading day only (same as other finance lanes).
-    from monitor.trading_calendar import is_trading_day
-    if not is_trading_day(today):
-        print(f"earnings_post: {today} is not an NSE trading day; nothing to do")
-        return 0
+    # No trading-day guard: results board meetings land on weekends all through earnings season;
+    # is_fresh makes no-filing days a clean no-op (see x/cron/run.sh for the 2026-07-11 misses).
 
     return run_today(now, args.dry_run)
 
