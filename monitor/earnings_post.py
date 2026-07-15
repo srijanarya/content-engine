@@ -182,22 +182,31 @@ def _screener_key_metrics(symbol: str) -> Optional[dict]:
         resp = s.get(f"https://www.screener.in/company/{symbol}/consolidated/", timeout=10)
         if resp.status_code != 200:
             return None
-        html = resp.text
-        # Screener quarterly table: label td then first value td per row.
-        # ponytail: simple regex; no BeautifulSoup dependency; fails gracefully on structure changes.
-        def _first_td_val(label: str) -> Optional[float]:
-            m = re.search(
-                rf'<td[^>]*class="[^"]*text[^"]*"[^>]*>\s*{re.escape(label)}\s*</td>\s*<td[^>]*>([\d,]+(?:\.\d+)?)</td>',
-                html, re.IGNORECASE,
-            )
-            return float(m.group(1).replace(",", "")) if m else None
-        rev = _first_td_val("Sales") or _first_td_val("Revenue")
-        pat = _first_td_val("Net Profit") or _first_td_val("PAT")
-        if rev is None and pat is None:
-            return None
-        return {"revenue_cr": rev, "pat_cr": pat}
+        return _parse_screener_quarterly(resp.text)
     except Exception:
         return None
+
+
+def _parse_screener_quarterly(html: str) -> Optional[dict]:
+    """Parse Screener's quarterly table into {'revenue_cr', 'pat_cr'} for the LATEST quarter.
+
+    2026-07-15: row labels live inside showSchedule('<label>', 'quarters') buttons and value
+    cells are whitespace-padded — the old adjacent-td regex matched nothing (verified=0 on every
+    draft). Columns run oldest→newest, so the LAST cell is the most recent quarter (the old code
+    took the first — the oldest). Fail-closed: any structure drift → None.
+    ponytail: still regex, no BeautifulSoup dependency."""
+    def _latest(label: str) -> Optional[float]:
+        m = re.search(r"showSchedule\('" + re.escape(label) + r"',\s*'quarters'.*?</tr>",
+                      html, re.DOTALL)
+        if not m:
+            return None
+        vals = re.findall(r'<td[^>]*>\s*(-?[\d,]+(?:\.\d+)?)\s*</td>', m.group(0))
+        return float(vals[-1].replace(",", "")) if vals else None
+    rev = _latest("Sales") or _latest("Revenue")
+    pat = _latest("Net Profit") or _latest("PAT")
+    if rev is None and pat is None:
+        return None
+    return {"revenue_cr": rev, "pat_cr": pat}
 
 
 def _try_cross_validate(symbol: str, xbrl_metrics: dict, fetcher) -> int:
@@ -249,7 +258,7 @@ def _fetch_and_parse_filings(
         fetcher = NSEXbrlFetcher()  # caller didn't share one; isolated call (e.g. test)
 
     if nse_calls is not None:
-        nse_calls[0] += 1   # count: fetch_financial_results
+        nse_calls[0] += 2   # discovery is now 2 NSE calls (legacy + integrated-filing endpoints) since the 2026-07 integrated-filing fix
     filings = fetcher.fetch_financial_results(symbol, period="Quarterly")
     if not filings:
         return []

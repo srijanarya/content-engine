@@ -287,6 +287,90 @@ def test_session_reuse_single_fetcher_across_symbols():
         "fetcher must be the SAME instance across all symbol calls"
 
 
+def test_integrated_filing_shape_flows_to_q1fy27_row():
+    from types import SimpleNamespace
+    import monitor.earnings_post as ep
+
+    filing = SimpleNamespace(
+        xbrl_url="https://nsearchives.nseindia.com/corporate/xbrl/INTEGRATED_FILING_INDAS_1691776_13072026072058_WEB.xml",
+        period="30-JUN-2026",
+        broad_cast_date="14-Jul-2026 19:17:07",
+        raw={"consolidated": "Consolidated"},
+    )
+    fake_fetcher = SimpleNamespace(
+        fetch_financial_results=lambda symbol, period="Quarterly": [filing],
+        download_xbrl=lambda url: b"<xml/>",
+        parse_xbrl=lambda content: {
+            "revenue_cr": 34579.0,
+            "pat_cr": 4626.0,
+            "eps": 17.09,
+            "ebitda_cr": 7231.0,
+            "pbt_cr": 6108.0,
+            "opm_pct": 20.91,
+        },
+    )
+
+    with patch.object(ep, "_try_cross_validate", lambda *a, **k: 1):
+        rows = ep._fetch_and_parse_filings(
+            "HCLTECH",
+            fresh_now=datetime(2026, 7, 14, 20, 0, tzinfo=_IST),
+            fetcher=fake_fetcher,
+        )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["period_end"] == "2026-06-30"
+    assert row["fiscal_label"] == "Q1FY27"
+    assert row["consolidated"] == 1
+    assert row["revenue_cr"] == 34579.0
+    assert row["verified"] == 1
+    assert row["_bcast"] == "14-Jul-2026 19:17:07"
+
+
+def test_screener_parse_takes_latest_quarter_from_button_markup():
+    # Live markup shape 2026-07-15: label inside a showSchedule button, cells whitespace-padded,
+    # columns oldest→newest. The parser must take the LAST cell (newest quarter), not the first.
+    html = """
+    <table><tbody>
+      <tr class="stripe">
+        <td class="text">
+          <button class="button-plain" onclick="Company.showSchedule('Sales', 'quarters', this)">
+            Sales&nbsp;<span class="blue-icon">+</span>
+          </button>
+        </td>
+        <td class="highlight-cell">
+          26,296
+        </td>
+        <td class="">
+          33,981
+        </td>
+        <td class="">
+          34,579
+        </td>
+      </tr>
+      <tr>
+        <td class="text">
+          <button class="button-plain" onclick="Company.showSchedule('Net Profit', 'quarters', this)">
+            Net Profit&nbsp;<span class="blue-icon">+</span>
+          </button>
+        </td>
+        <td class="highlight-cell">
+          3,531
+        </td>
+        <td class="">
+          4,626
+        </td>
+      </tr>
+    </tbody></table>
+    """
+    out = earnings_post._parse_screener_quarterly(html)
+    assert out == {"revenue_cr": 34579.0, "pat_cr": 4626.0}
+
+
+def test_screener_parse_fails_closed_on_structure_drift():
+    assert earnings_post._parse_screener_quarterly("<html><body>nothing here</body></html>") is None
+
+
 # ── cross-validate: verified=0 blocks posting ─────────────────────────────────
 
 def test_cross_validate_zero_when_screener_unavailable():
