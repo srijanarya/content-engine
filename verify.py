@@ -185,6 +185,7 @@ for label, rel in [("freshness", "monitor/test_daily_wrap_freshness.py"),
                    ("flood+per-company", "test_post_guards.py"),
                    ("reply-guard", "x/test_reply_guards.py"),
                    ("self-audit", "x/test_self_audit.py"),
+                   ("analytics-parser", "x/test_pull_analytics_parser.py"),
                    ("sanity-gate", "x/sanity_gate.py"),
                    ("video", "video/test_make_video.py")]:
     p = HERE / rel
