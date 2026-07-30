@@ -49,6 +49,20 @@ def _escalate(job: str, entry: dict) -> None:
         f"{RENOTIFY_HOURS}h while it keeps failing.\n\n"
         f"Log tail:\n```\n{_log_tail(log)}\n```\n"
     )
+    # Buzz COPY into #content. Already rate-limited by THRESHOLD + RENOTIFY_HOURS above,
+    # so this is ~1/day/lane at worst. Fail-safe: this breaker always exits 0.
+    try:
+        hub = str(Path.home() / "autonomy" / "hub")
+        if hub not in sys.path:
+            sys.path.insert(0, hub)
+        import buzz_notify
+        channel = buzz_notify.env("BUZZ_CONTENT_CHANNEL")
+        if channel:
+            buzz_notify.post(
+                f"X lane FAILING: {job} — {entry['count']} consecutive "
+                f"(rc={entry['last_rc']}); log: {log}", channel=channel)
+    except Exception as exc:  # noqa: BLE001 — a breaker bug must never fail the lane
+        print(f"buzz mirror skipped: {exc}")
 
 
 def record(job: str, rc: int) -> None:
