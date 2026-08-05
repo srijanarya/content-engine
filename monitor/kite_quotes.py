@@ -27,10 +27,29 @@ SECTORS = {
 }
 # Default to the trading repo's .env (the one place the access token is kept fresh). Override w/ KITE_ENV_PATH.
 DEFAULT_ENV = "/Users/srijan/aksh_backtesting_trading/.env"
+# Same script the trading repo's own launchd job (com.srijan.kite-daily-auth, 08:15 + 12:30) already runs
+# unattended twice daily. On-demand reauth here is needed because that fixed schedule routinely misses its
+# 08:15 slot -- this Mac reboots ~09:30-10:00 IST most mornings (`last reboot`), so the 08:15 tick never
+# fires, and the 12:30 backup lands after the premarket lane's 9-11 IST window closes. Without this, every
+# premarket retry in that window fails closed on the prior day's expired token (2026-08-03/04/05 incident).
+AUTH_SCRIPT = "/Users/srijan/aksh_backtesting_trading/scripts/kite_daily_auth.py"
 
 
 class KiteUnavailable(RuntimeError):
     """Raised on any creds/auth/network failure so the finance posts can fail closed."""
+
+
+def _reauth() -> bool:
+    """Trigger the trading repo's own TOTP autologin, no fresher-token proof needed than its exit code.
+    Safe to call speculatively: auth.py's cache is date-aware and skips the real login if today's token
+    is already fresh, so this only does real work on the exact days it's needed."""
+    import subprocess
+    try:
+        r = subprocess.run([sys.executable, AUTH_SCRIPT], cwd=str(Path(AUTH_SCRIPT).parent.parent),
+                            capture_output=True, text=True, timeout=60)
+        return r.returncode == 0
+    except Exception:
+        return False
 
 
 def _change_pct(q: dict) -> float | None:
@@ -81,15 +100,29 @@ def fetch_quotes() -> dict:
     Returns {nifty_close, nifty_change_pct, vix, sectors:{KEY:pct}} — real, correctly-signed NSE data."""
     try:
         from kiteconnect import KiteConnect
+        from kiteconnect.exceptions import TokenException
     except ImportError as e:
         raise KiteUnavailable(f"kiteconnect not installed: {e}")
-    key, tok = _load_creds()
-    syms = ["NSE:NIFTY 50", "NSE:INDIA VIX"] + [f"NSE:{s}" for s in SECTORS.values()]
-    try:
+
+    def _quote(key, tok):
         k = KiteConnect(api_key=key)
         k.set_access_token(tok)
-        q = k.quote(syms)
-    except Exception as e:  # TokenException, network, etc. -> fail closed
+        return k, k.quote(syms)
+
+    syms = ["NSE:NIFTY 50", "NSE:INDIA VIX"] + [f"NSE:{s}" for s in SECTORS.values()]
+    key, tok = _load_creds()
+    try:
+        k, q = _quote(key, tok)
+    except TokenException:
+        # Stale token: try the on-demand reauth once, then retry the quote exactly once more.
+        if not _reauth():
+            raise KiteUnavailable("Kite token expired and on-demand reauth failed")
+        try:
+            key, tok = _load_creds()
+            k, q = _quote(key, tok)
+        except Exception as e:
+            raise KiteUnavailable(f"Kite quote failed after reauth ({type(e).__name__}): {str(e)[:160]}")
+    except Exception as e:  # network, etc. -> fail closed
         raise KiteUnavailable(f"Kite quote failed ({type(e).__name__}): {str(e)[:160]}")
 
     nifty = q.get("NSE:NIFTY 50")
