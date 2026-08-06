@@ -63,7 +63,7 @@ def review(content: str, timeout: int = 120) -> tuple[bool, str]:
         import sys as _sys
         from pathlib import Path as _P
         _sys.path.insert(0, str(_P(__file__).parent.parent))
-        from claude_env import claude_env  # factory-plan routing (srijanaryaji@), 2026-07-12
+        from claude_env import claude_env  # factory-profile routing (srijanaryay@, single account since 2026-08-06)
         out = subprocess.run(["claude", "-p", prompt], capture_output=True, text=True,
                              timeout=timeout, env=claude_env())
     except Exception as e:

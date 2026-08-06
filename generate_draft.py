@@ -60,7 +60,7 @@ def _gen_via_cli(prompt: str, system: str | None = SYSTEM_PROMPT) -> str:
     """Primary path: the `claude` CLI (uses your logged-in plan, works headless)."""
     import subprocess
     full = (system + "\n\n" + prompt) if system else prompt
-    from claude_env import claude_env  # factory-plan routing (srijanaryaji@), 2026-07-12
+    from claude_env import claude_env  # factory-profile routing (srijanaryay@, single account since 2026-08-06)
     out = subprocess.run(
         ["claude", "-p", full], capture_output=True, text=True, timeout=300,
         env=claude_env(),

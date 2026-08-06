@@ -1,8 +1,9 @@
 """Env builder for headless `claude` shell-outs — bills the FACTORY plan.
 
-Plan routing (Srijan, 2026-07-12): all headless lanes run as srijanaryaji@
-(CLAUDE_CONFIG_DIR=~/.claude-factory + keychain token claude-headless-token-factory);
-the default profile (srijanaryay@) is reserved for interactive sessions. Mirrors
+Account routing (Srijan, 2026-08-06 cutover): EVERYTHING runs as srijanaryay@gmail.com —
+srijanaryaji@ is retired (subscription ended 2026-08-06). The factory profile
+(CLAUDE_CONFIG_DIR=~/.claude-factory + keychain token claude-headless-token-factory)
+is kept only as env isolation for headless lanes, same account as default. Mirrors
 "content creation"/publish/claude_cli.py::_env() — the canonical pattern. Dir-exists
 guard keeps this a no-op on machines without the factory profile (e.g. the server).
 """
