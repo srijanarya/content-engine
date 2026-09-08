@@ -7,12 +7,17 @@ implied directional views, "poised to recover", "use as a factor signal", hedged
 anything that reads as a basis for an investment decision on a specific security. When the human
 review is removed (auto-post), this replaces the human ceiling.
 
-Uses the `claude` CLI (Max plan, headless) — same path as generate_draft. Fail-closed: if the
-reviewer can't run or returns anything unexpected, treat as BLOCK (never post on uncertainty).
+Uses the same subscription-first router as generate_draft. Fail-closed: if the reviewer can't
+run or returns anything unexpected, treat as BLOCK (never post on uncertainty).
 """
 from __future__ import annotations
-import subprocess, sys
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from claude_env import run_text
 
 REVIEW_PROMPT = """You are a strict SEBI compliance reviewer for Indian stock-market content published by an
 UNREGISTERED individual (not a SEBI Research Analyst or Investment Adviser). Decide if it is safe to publish.
@@ -60,26 +65,19 @@ def review(content: str, timeout: int = 120) -> tuple[bool, str]:
     """Return (is_safe, reason). Fail-closed: any error or unrecognized reply => (False, ...)."""
     prompt = REVIEW_PROMPT.format(content=content[:8000])
     try:
-        import sys as _sys
-        from pathlib import Path as _P
-        _sys.path.insert(0, str(_P(__file__).parent.parent))
-        from claude_env import claude_env  # factory-profile routing (srijanaryay@, single account since 2026-08-06)
-        out = subprocess.run(["claude", "-p", prompt], capture_output=True, text=True,
-                             timeout=timeout, env=claude_env())
+        resp = run_text(prompt, timeout=timeout).text.strip()
     except Exception as e:
         return (False, f"reviewer error (fail-closed): {e}")
-    resp = (out.stdout or "").strip()
-    if out.returncode != 0 or not resp:
-        return (False, f"reviewer no-output (fail-closed): rc={out.returncode} {out.stderr[:120]}")
-    # Read the VERDICT line (the model reasons first, then states the verdict last).
-    verdict = next((ln for ln in reversed(resp.splitlines()) if "VERDICT:" in ln.upper()), "")
-    up = verdict.upper()
-    if "VERDICT: SAFE" in up or up.strip().endswith("SAFE"):
+    # The contract requires the verdict on the final non-empty line. Anything after it is unclear.
+    lines = [line.strip() for line in resp.splitlines() if line.strip()]
+    verdict = lines[-1] if lines else ""
+    up = verdict.upper().strip()
+    if up == "VERDICT: SAFE":
         return (True, "ok")
-    if "VERDICT: BLOCK" in up or "BLOCK" in up:
+    if up.startswith("VERDICT: BLOCK"):
         return (False, verdict.strip() or "blocked")
     # No clear verdict line → fail closed.
-    return (False, f"reviewer unclear reply (fail-closed): {resp.splitlines()[-1][:120]}")
+    return (False, f"reviewer unclear reply (fail-closed): {verdict[:120]}")
 
 
 def demo():

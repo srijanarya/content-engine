@@ -2,22 +2,15 @@
 """
 Draft generator — takes a topic/context and outputs a formatted content draft.
 
-Generation tries the `claude` CLI first (headless on your logged-in plan — no API key
-needed) and degrades to a cheap Anthropic-compatible bulk endpoint when the CLI fails
-(e.g. monthly spend limit) and one is configured via env (BULK_BASE_URL +
-BULK_AUTH_TOKEN + BULK_MODEL). The BULK_* names are deliberate: exporting
-ANTHROPIC_BASE_URL/AUTH_TOKEN would silently redirect the `claude` CLI subprocess to
-the bulk endpoint too. See .env.template.
+Generation tries the logged-in Claude plan, then ChatGPT-backed Codex, then the explicitly
+configured Anthropic-compatible bulk endpoint. See .env.template.
 """
 from __future__ import annotations  # PEP 604 (`str | None`) on Python 3.7+
-import os, sys, json, re
+import sys, re
 from datetime import date
 from pathlib import Path
 
-# Model routing — all env-driven, no hardcoded endpoints or credentials.
-BULK_BASE = os.environ.get("BULK_BASE_URL")      # cheap degrade endpoint, optional
-BULK_TOKEN = os.environ.get("BULK_AUTH_TOKEN")   # token for that endpoint
-BULK_MODEL = os.environ.get("BULK_MODEL")        # model id on that endpoint
+from claude_env import TextResult, run_text
 
 ENGINE_DIR = Path(__file__).parent
 VOICE_MD = (ENGINE_DIR / "voice.md").read_text()
@@ -42,44 +35,8 @@ Output format — always produce all three sections:
 SEBI rule (for finance content): education/data/language-analysis only. Never say buy/sell/hold."""
 
 
-def _gen_via_sdk(prompt: str, system: str | None = SYSTEM_PROMPT) -> str:
-    """Degrade path: a cheap Anthropic-compatible endpoint. Raises if not configured."""
-    import anthropic
-    if not (BULK_BASE and BULK_TOKEN and BULK_MODEL):
-        raise ValueError("bulk endpoint not configured")
-    client = anthropic.Anthropic(api_key=BULK_TOKEN, base_url=BULK_BASE)
-    msg = client.messages.create(
-        model=BULK_MODEL, max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}],
-        **({"system": system} if system else {}),
-    )
-    return msg.content[0].text
-
-
-def _gen_via_cli(prompt: str, system: str | None = SYSTEM_PROMPT) -> str:
-    """Primary path: the `claude` CLI (uses your logged-in plan, works headless)."""
-    import subprocess
-    full = (system + "\n\n" + prompt) if system else prompt
-    from claude_env import claude_env  # factory-profile routing (srijanaryay@, single account since 2026-08-06)
-    out = subprocess.run(
-        ["claude", "-p", full], capture_output=True, text=True, timeout=300,
-        env=claude_env(),
-    )
-    if out.returncode != 0 or not out.stdout.strip():
-        err = (out.stderr.strip() or out.stdout.strip())[:300]  # spend-limit msg lands on stdout
-        raise RuntimeError(f"claude CLI failed (rc={out.returncode}): {err}")
-    return out.stdout.strip()
-
-
-def gen_text(prompt: str, system: str | None = SYSTEM_PROMPT) -> tuple[str, str]:
-    """CLI first (logged-in plan); degrade to the bulk endpoint on failure. Returns (text, model)."""
-    try:
-        return _gen_via_cli(prompt, system), "claude-cli"
-    except Exception as e:
-        if not (BULK_BASE and BULK_TOKEN and BULK_MODEL):
-            raise
-        print(f"claude CLI failed ({e}); degrading to bulk endpoint", file=sys.stderr)
-        return _gen_via_sdk(prompt, system), BULK_MODEL
+def gen_text(prompt: str, system: str | None = SYSTEM_PROMPT) -> TextResult:
+    return run_text(prompt, system)
 
 
 def _learnings_line() -> str:
@@ -112,7 +69,8 @@ Context / source material:
 Write the newsletter, X thread, and LinkedIn carousel for this piece. Follow the voice guide.
 {"SEBI: finance content — education and data analysis only, no buy/sell calls." if engine == "finance" else ""}""" + (_learnings_line() if use_learnings else "")
 
-    body, model_used = gen_text(prompt)
+    result = gen_text(prompt)
+    body, model_used = result.text, result.provider
 
     # HARD compliance gate for finance content — a per-stock call never reaches the queue.
     status = "needs-review"

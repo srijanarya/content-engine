@@ -26,7 +26,7 @@ Most "AI content tools" generate generic slop. This one is built on two opinions
 | File | Role |
 |------|------|
 | `voice.md` | The style guide the generator follows. Warm, first-person, receipts-first — not analyst-clinical. The learn loop refines it from what performs. |
-| `generate_draft.py` | Takes an engine + topic + source context, returns a newsletter / X thread / LinkedIn carousel in the voice. Routes to a cheap model for bulk gen, falls back to a frontier model. |
+| `generate_draft.py` | Takes an engine + topic + source context, returns a newsletter / X thread / LinkedIn carousel in the voice. Uses Claude, then ChatGPT-backed Codex, then an optional configured bulk endpoint. |
 | `monitor/ai_world_monitor.py` | Watches Hacker News + arXiv for notable AI releases/benchmarks. Dedups against `seen_ai.json`, drafts the top item. |
 | `monitor/finance_monitor.py` | Watches the NSE earnings calendar + finance news for IT-services earnings and macro events. SEBI-safe: education/data/language-analysis only, never buy/sell calls. |
 | `learn.py` | Weekly pass over `content_performance.json` → ranks top hooks/topics/engines → writes biases for the next cycle. |
@@ -60,9 +60,9 @@ bash monitor/run_monitors.sh
 python3 learn.py
 ```
 
-Generation is `claude`-CLI-first (your logged-in plan). Env vars (`BULK_BASE_URL` +
-`BULK_AUTH_TOKEN` + `BULK_MODEL`) optionally add a degrade endpoint used when the CLI fails
-(e.g. a spend limit); no credentials are committed. Leave them unset to use the CLI alone.
+Generation uses the logged-in Claude plan first and the ChatGPT-backed Codex login second.
+Env vars (`BULK_BASE_URL` + `BULK_AUTH_TOKEN` + `BULK_MODEL`) optionally add a final,
+explicitly billed degrade endpoint; no credentials are committed.
 
 ## Design notes
 
@@ -70,8 +70,8 @@ Generation is `claude`-CLI-first (your logged-in plan). Env vars (`BULK_BASE_URL
   the same safety property you'd want on any autonomous outbound system.
 - **SEBI-aware.** Finance content is constrained to education, data, and language analysis. The
   generator prompt enforces "here's what the data signals," never "buy/sell/hold X."
-- **Cheap-model-first.** Bulk generation routes to an inexpensive model; the frontier model is the
-  fallback, not the default — content volume shouldn't burn premium quota.
+- **Subscription-first.** Existing Claude and ChatGPT plan access is used before any explicitly
+  configured bulk endpoint.
 
 ---
 
